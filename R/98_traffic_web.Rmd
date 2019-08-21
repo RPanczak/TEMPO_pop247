@@ -1,0 +1,188 @@
+## Web data
+
+### Data
+
+```{r eval=FALSE, warning=FALSE, include=FALSE}
+traffic_8074 <- read_csv(here::here("data", "BCC", "traffic", "clean", "traffic_8074.csv"), col_types = cols(
+  .default = col_double(),
+  recorded = col_datetime(format = ""),
+  married = col_character(),
+  lane = col_character(),
+  ct = col_integer(), link_plan = col_integer(), 
+  mf1 = col_integer(), mf2 = col_integer(), mf3 = col_integer(), mf4 = col_integer(),
+  ds1 = col_integer(), ds2 = col_integer(), ds3 = col_integer(), ds4 = col_integer(),
+  rf1 = col_integer(), rf2 = col_integer(), rf3 = col_integer(), rf4 = col_integer())) %>% 
+  select(-ds4, -rf4, -tsc, -ss, -married, 
+         -ds1, -rf1, -ds2, -rf2, -ds3, -rf3)
+
+traffic_8074 <- traffic_8074[!duplicated(traffic_8074), ]
+traffic_8074 <- traffic_8074[order(traffic_8074$recorded, traffic_8074$lane), ]
+
+# table(attr(traffic_8074$recorded, "tzone"))
+traffic_8074$recorded <- force_tz(traffic_8074$recorded, "Australia/Brisbane")
+
+saveRDS(traffic_8074, "data/BCC/traffic/clean/traffic_8074.Rds")
+
+```
+
+```{r}
+traffic_8074 <- readRDS("data/BCC/traffic/clean/traffic_8074.Rds") %>%  
+  filter(recorded >= ymd_hms("2018-10-08 00:00:00", tz = "Australia/Brisbane") & 
+           recorded <= ymd_hms("2019-01-27 23:59:59", tz = "Australia/Brisbane")) 
+
+# 15 min / 1h intervals as posix
+# lbelled with start of interval
+traffic_8074$recorded_15 <- ymd_hms(cut(traffic_8074$recorded,
+                                         breaks = seq(ymd_hms("2018-09-10 00:00:00", 
+                                                              tz = "Australia/Brisbane"), 
+                                                      ymd_hms("2019-01-28 00:00:00", 
+                                                              tz = "Australia/Brisbane"), 
+                                                      as.difftime(15, units = "mins")),
+                                         include.lowest = TRUE), tz = "Australia/Brisbane")
+
+# traffic_8074$recorded_60 <- ymd_hms(cut(traffic_8074$recorded,
+#                                          breaks = seq(ymd_hms("2018-09-10 00:00:00", 
+#                                                               tz = "Australia/Brisbane"), 
+#                                                       ymd_hms("2019-01-28 00:00:00", 
+#                                                               tz = "Australia/Brisbane"), 
+#                                                       as.difftime(1, units = "hours")),
+#                                          include.lowest = TRUE), tz = "Australia/Brisbane")
+
+# intervals as character
+# traffic_8074$time_cat_str <- substr(as.character(traffic_8074$recorded_cat), 12, 16)
+
+# fix vars order
+traffic_8074 %<>% 
+  select(dbid, recorded, starts_with("recorded_"), everything())
+
+```
+
+`r nrow(traffic_8074)` datapoints for the `8074` intersection are available from `r min(traffic_8074$recorded)` to `r max(traffic_8074$recorded)`. Available variable refers to overall 'measured flow' at the intersection. 
+
+```{r}
+traffic_8074 %>% 
+  select(-dbid, -ct, -starts_with("recorded_")) %>% 
+  slice(1:10)
+```
+
+### Results
+
+Individual data points, example of all lines for `2018-11-26`
+
+```{r warning=FALSE}
+traffic_8074_long <- traffic_8074 %>% 
+  gather(code, mf, mf1:mf3)
+
+traffic_8074_long %>% 
+  filter(recorded >= ymd_hms("2018-11-26 04:00:00", tz = "Australia/Brisbane") & 
+           recorded <= ymd_hms("2018-11-26 23:59:59", tz = "Australia/Brisbane")) %>% 
+  ggplot(aes(x = recorded, y = mf, colour = code)) + 
+  geom_line() + 
+  geom_point() + 
+  scale_x_datetime() + theme_minimal() + 
+  xlab("") + ylab("Measured flow") + 
+  facet_wrap(~lane, ncol = 1)
+```
+
+Data aggregated in 15 min buckets by lane
+
+```{r}
+traffic_8074_agg_long <- traffic_8074 %>% 
+  group_by(recorded_15, lane) %>% 
+  summarise(data_points = n(),
+            mf1 = sum(mf1, na.rm = TRUE),
+            mf2 = sum(mf2, na.rm = TRUE),
+            mf3 = sum(mf3, na.rm = TRUE)) %>% 
+  gather(code, mf, mf1:mf3)
+
+traffic_8074_agg_long %>% 
+  filter(recorded_15 >= ymd_hms("2018-11-26 04:00:00", tz = "Australia/Brisbane") & 
+           recorded_15 <= ymd_hms("2018-11-26 23:59:59", tz = "Australia/Brisbane")) %>% 
+  ggplot(aes(x = recorded_15, y = mf, colour = code)) + 
+  geom_line() + 
+  scale_x_datetime() + theme_minimal() + 
+  xlab("") + ylab("Measured flow") + 
+  facet_wrap(~lane, ncol = 1)
+```
+
+### Limitations
+
+- little is known how the variable `measured flow` is calculated
+- there are gaps in data collection/recording
+- there is no way to disentangle direction of flows, ie. split traffic to incoming and outgoing
+
+- Different amount of data points per time bucket, some means lower flows? Some means data not captured?
+
+```{r}
+traffic_8074_agg_long %>% 
+  filter(recorded_15 >= ymd_hms("2018-10-08 00:00:00", tz = "Australia/Brisbane") & 
+           recorded_15 <= ymd_hms("2018-10-08 23:59:59", tz = "Australia/Brisbane")) %>% 
+  ggplot(aes(x = recorded_15, y = data_points)) + 
+  geom_col() + 
+  scale_x_datetime() + theme_minimal() + 
+  xlab("") + ylab("No. of data points per 15m bucket") + 
+  facet_wrap(~lane, ncol = 1)
+```
+
+- There are four days in Nov with missing data! Days around might be affected too with partial data?
+
+```{r}
+traffic_8074_agg_long %>% 
+  filter(recorded_15 >= ymd_hms("2018-11-20 00:00:00", tz = "Australia/Brisbane") & 
+           recorded_15 <= ymd_hms("2018-11-27 23:59:59", tz = "Australia/Brisbane")) %>% 
+  mutate(date = as.Date(recorded_15)) %>% 
+  group_by(date) %>% 
+  summarise(mf = sum(mf, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  ggplot(aes(x = date, y = mf)) + 
+  geom_col() + 
+  scale_x_date() + theme_minimal() + 
+  xlab("") + ylab("Measured flow") 
+```
+
+
+## Comparisons - BCC vs web
+
+```{r}
+web <- readRDS("data/BCC/traffic/clean/traffic_8074.Rds") %>% 
+  gather(code, mf_web, mf1:mf3) %>% 
+  mutate(date = as.Date(recorded, tz = "Australia/Brisbane")) %>% 
+  group_by(date) %>% 
+  summarise(mf_web = sum(mf_web, na.rm = TRUE))
+
+bcc <- readRDS("data/BCC/traffic_official/clean/bcc_traffic_8074.Rds") %>% 
+  gather(code, mf_bcc, d1:d9) %>% 
+  mutate(date = as.Date(recorded_15, tz = "Australia/Brisbane")) %>% 
+  group_by(date) %>% 
+  summarise(mf_bcc = sum(mf_bcc, na.rm = TRUE))
+
+compare <- bcc %>% 
+  left_join(web) %>% 
+  mutate(diff = mf_bcc - mf_web,
+         ratio = mf_bcc / mf_web)
+```
+
+### Absolute differences 
+
+```{r warning=FALSE}
+ggplot(compare, aes(x = date, y = diff)) + 
+  geom_col() + 
+  scale_x_date() + theme_minimal() + 
+  xlab("") + ylab("Difference in flow (BCC - web)") 
+```
+
+
+### Relative differences 
+
+```{r}
+ggplot(compare, aes(x = date, y = ratio)) + 
+  geom_line() + 
+  scale_x_date() + theme_minimal() + 
+  # scale_y_log10() +
+  xlab("") + ylab("Ratio of flow (BCC / web)") 
+```
+
+```{r include=FALSE}
+rm(bcc, web, compare)
+gc()
+```

@@ -1,0 +1,1231 @@
+---
+title: "POP247 - campus EDA"
+subtitle: "Modelling ferry terminal with Google Places"
+# author: "Radoslaw Panczak"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+mainfont: DejaVu Sans
+output: 
+  html_document: 
+    # css: custom.css
+    toc: true
+    toc_depth: 4
+    toc_float: true
+    number_sections: true
+    theme: united 
+    highlight: pygments 
+---
+
+<!-- ------------------------------------------------------------ --> 
+<!-- ------------------------------------------------------------ --> 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, 
+                      fig.width=8, fig.height=6, dpi=300, 
+                      out.width="800px", out.height="600px",
+                      cache=FALSE)
+
+# knitr::opts_knit$set(root.dir = 'R:/POP247-Q0786/')
+# setwd('R:/POP247-Q0786/')
+
+set.seed(12345)
+options(scipen = 999)
+
+library(pacman) 
+p_load(tidyverse, magrittr, lubridate,
+       scales, gghighlight, fitdistrplus, MASS, mgcv, gratia, INLA, INLAutils)
+
+inla.setOption(num.threads = 3) 
+```
+
+# Ferry passengers
+
+```{r echo=FALSE}
+uq_campus_long_mode <- readRDS("data/counters/clean/uq_campus_long_mode.Rds")
+```
+
+## Time series 
+
+Ferry passengers, one full week, aggregated hourly to match google places
+
+```{r echo=FALSE}
+uq_ferry <- uq_campus_long_mode %>% 
+  filter(date >= ymd_hms("2016-08-15 00:00:00", tz = "Australia/Brisbane") & 
+           date <= ymd_hms("2016-08-21 23:59:59", tz = "Australia/Brisbane")) %>%
+  filter(site == "ferry") %>% 
+  arrange(date)
+
+uq_ferry$date_cat <- ymd_hms(cut(uq_ferry$date,
+                                 breaks = seq(ymd_hms("2016-08-15 00:00:00", 
+                                                      tz = "Australia/Brisbane"), 
+                                              ymd_hms("2016-08-22 00:00:00", 
+                                                      tz = "Australia/Brisbane"), 
+                                              as.difftime(1, units = "hours")),
+                                 include.lowest = TRUE), tz = "Australia/Brisbane")
+
+uq_ferry %<>% 
+  group_by(date_cat, direction) %>% 
+  summarise(count = sum(count))
+
+uq_ferry %>% 
+  mutate(count = ifelse(test = direction == "outbound", yes = -1 * count, no = count)) %>%
+  mutate(dom = strftime(date_cat, format = "%d")) %>% 
+  ggplot(aes(x = date_cat, y = count)) + 
+  geom_col(aes(fill = direction)) + 
+  scale_x_datetime() + theme_minimal() + 
+  xlab("") + ylab("People* counts") +
+  geom_hline(yintercept = 0) # + coord_polar()
+
+```
+
+## Distribution of counts
+
+Frequency of counts from one week
+
+```{r echo=FALSE}
+uq_ferry %>% 
+  ggplot(aes(x = count)) + 
+  geom_histogram(aes(fill = direction)) + 
+  gghighlight() +
+  theme_minimal() + 
+  facet_wrap(~direction) +
+  xlab("") + ylab("Passenger counts") # + coord_polar()
+```
+
+Note: not all hours are represented; missing values are filled with zeroes below.
+
+
+# Google places
+
+Popular times, all values from campus with ferry terminal highlighted
+
+```{r echo=FALSE}
+campus_places_times_long <- readRDS(here::here("data", "google_places", "clean", "campus_places_times_long.Rds"))
+
+ggplot(campus_places_times_long, aes(time, popularity, group = name)) +
+  geom_line() + 
+  gghighlight(name == "UQ St Lucia ferry terminal, St Lucia") +
+  theme_minimal() + xlab("Hour of the day (over week)") + ylab("Popularity")
+
+campus_places_ferry <- campus_places_times_long %>% 
+  filter(name == "UQ St Lucia ferry terminal, St Lucia")
+
+rm(campus_places_times_long)
+
+# generating fake dates
+campus_places_ferry$date_cat <- c(
+  seq(ymd_hms("2016-08-21 00:00:00", tz = "Australia/Brisbane"), 
+      ymd_hms("2016-08-21 23:00:00", tz = "Australia/Brisbane"), 
+      as.difftime(1, units = "hours")), 
+  
+  seq(ymd_hms("2016-08-15 00:00:00", tz = "Australia/Brisbane"), 
+      ymd_hms("2016-08-20 23:00:00", tz = "Australia/Brisbane"), 
+      as.difftime(1, units = "hours"))
+)
+
+campus_places_ferry %<>% 
+  dplyr::select(-time, -dow, -tod, -name) %>% 
+  arrange(date_cat)
+```
+
+```{r eval=FALSE, include=FALSE}
+ggplot(campus_places_ferry, aes(date_cat, popularity)) +
+  geom_line() + 
+  theme_minimal() + xlab("Fake time") + ylab("Popularity")
+```
+
+```{r echo=FALSE}
+uq_ferry_places <- bind_cols(date_cat = rep(seq(ymd_hms("2016-08-15 00:00:00", 
+                                                        tz = "Australia/Brisbane"), 
+                                                ymd_hms("2016-08-21 23:59:00", 
+                                                        tz = "Australia/Brisbane"), 
+                                                as.difftime(1, units = "hours")), 2),
+                             direction = c(rep("inbound", 168), rep("outbound", 168))) %>% 
+  left_join(uq_ferry) %>% 
+  left_join(campus_places_ferry) %>% 
+  arrange(date_cat)
+
+rm(uq_ferry)
+```
+
+
+# EDA
+
+## Stocks at the terminal
+
+### Data
+
+```{r echo=FALSE}
+uq_ferry_places_agg <- uq_ferry_places %>% 
+  group_by(date_cat) %>% 
+  summarise(count = sum(count),
+            popularity = first(popularity)) %>% 
+  ungroup() %>% 
+  mutate(count = ifelse(test = is.na(count), yes = 0, no = count)) %>% 
+  mutate(time = as.numeric(date_cat) / 100) %>% 
+  mutate(hod = as.numeric(strftime(date_cat, "%H", tz = ""))) %>% 
+  mutate(dow = as.numeric(strftime(date_cat, "%d", tz = "")) - 14) %>% 
+  mutate(wknd = ifelse(test = dow >=6 & dow <= 7, yes = 1, no = 0))
+
+rm(uq_ferry_places)
+
+uq_ferry_places_agg$time <- uq_ferry_places_agg$time - min(uq_ferry_places_agg$time) 
+
+saveRDS(uq_ferry_places_agg, "data/counters/clean/uq_ferry_places_agg.Rds")
+
+uq_ferry_places_agg %>% 
+  ggplot(aes(x = date_cat, y = count)) + 
+  geom_col() + 
+  scale_x_datetime() + theme_minimal() + 
+  xlab("") + ylab("Hourly passenger counts") + 
+  geom_line(aes(y = popularity), col = "red") 
+
+```
+
+### Distribution of counts
+
+Frequency of counts from one week
+
+```{r echo=FALSE}
+uq_ferry_places_agg %>% 
+  ggplot(aes(x = count)) + 
+  geom_histogram() + 
+  gghighlight() +
+  theme_minimal() + 
+  xlab("") + ylab("Passenger counts") # + coord_polar()
+```
+
+```{r}
+ferry_poi <- fitdist(uq_ferry_places_agg$count, "pois")
+ferry_nb <- fitdist(uq_ferry_places_agg$count, "nbinom")
+
+par(mfrow = c(1,2))
+denscomp(list(ferry_poi, ferry_nb), legendtext = c("Poisson", "negative binomial"), fitlty = 1)
+cdfcomp(list(ferry_poi, ferry_nb), legendtext = c("Poisson", "negative binomial"), fitlty = 1)
+
+gofstat(list(ferry_poi, ferry_nb), fitnames = c("Poisson", "negative binomial"))
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+dev.off()
+```
+
+
+```{r eval=FALSE, include=FALSE}
+#### LOESS smoother
+L1 <- loess(count ~ time, data = uq_ferry_places_agg, span = 0.1)
+PL1 <- predict(L1, se = TRUE)
+
+plot(x = uq_ferry_places_agg$time, y = uq_ferry_places_agg$count)
+lines(uq_ferry_places_agg$time, PL1$fit)
+lines(uq_ferry_places_agg$time, PL1$fit + 2*PL1$se.fit, lty = 2)
+lines(uq_ferry_places_agg$time, PL1$fit - 2*PL1$se.fit, lty = 2)
+
+```
+
+```{r eval=FALSE, include=FALSE}
+#### naive linear
+glm.nb(count ~ time, data = uq_ferry_places_agg)
+glm.nb(count ~ popularity, data = uq_ferry_places_agg)
+glm.nb(count ~ time + popularity, data = uq_ferry_places_agg)
+```
+
+## Departures 
+
+```{r echo=FALSE}
+uq_ferry <- uq_campus_long_mode %>% 
+  filter(date >= ymd_hms("2016-08-15 00:00:00", tz = "Australia/Brisbane") & date <= ymd_hms("2016-08-21 23:59:59", tz = "Australia/Brisbane")) %>%
+  filter(site == "ferry") %>% 
+  filter(direction == "outbound") %>% 
+  arrange(date)
+
+uq_ferry$date_cat <- ymd_hms(cut(uq_ferry$date,
+                                 breaks = seq(ymd_hms("2016-08-15 00:00:00", 
+                                                      tz = "Australia/Brisbane"), 
+                                              ymd_hms("2016-08-22 00:00:00", 
+                                                      tz = "Australia/Brisbane"), 
+                                              as.difftime(1, units = "hours")),
+                                 include.lowest = TRUE), tz = "Australia/Brisbane")
+
+uq_ferry %<>% 
+  group_by(date_cat) %>% 
+  summarise(count = sum(count))
+
+uq_ferry_places <- bind_cols(date_cat = seq(ymd_hms("2016-08-15 00:00:00", 
+                                                    tz = "Australia/Brisbane"), 
+                                            ymd_hms("2016-08-21 23:59:00", 
+                                                    tz = "Australia/Brisbane"), 
+                                            as.difftime(1, units = "hours"))) %>% 
+  left_join(uq_ferry) %>% 
+  left_join(campus_places_ferry) %>% 
+  arrange(date_cat)
+
+rm(uq_ferry)
+```
+
+### Data
+
+```{r echo=FALSE}
+uq_ferry_places_dep <- uq_ferry_places %>% 
+  mutate(count = ifelse(test = is.na(count), yes = 0, no = count)) %>% 
+  mutate(time = as.numeric(date_cat) / 100) %>% 
+  mutate(hod = as.numeric(strftime(date_cat, "%H", tz = ""))) %>% 
+  mutate(dow = as.numeric(strftime(date_cat, "%d", tz = "")) - 14) %>% 
+  mutate(wknd = ifelse(test = dow >=6 & dow <= 7, yes = 1, no = 0))
+
+uq_ferry_places_dep$time <- uq_ferry_places_dep$time - min(uq_ferry_places_dep$time) 
+
+rm(uq_ferry_places)
+
+saveRDS(uq_ferry_places_dep, "data/counters/clean/uq_ferry_places_dep.Rds")
+
+uq_ferry_places_dep %>% 
+  ggplot(aes(x = date_cat, y = count)) + 
+  geom_col() + 
+  scale_x_datetime() + theme_minimal() + 
+  xlab("") + ylab("Hourly passenger counts") + 
+  geom_line(aes(y = popularity), col = "red") 
+```
+
+### Distribution of counts
+
+Frequency of counts from one week
+
+```{r echo=FALSE}
+uq_ferry_places_dep %>% 
+  ggplot(aes(x = count)) + 
+  geom_histogram() + 
+  gghighlight() +
+  theme_minimal() + 
+  xlab("") + ylab("Passenger counts") # + coord_polar()
+```
+
+```{r}
+# Best distribution:
+ferry_poi <- fitdist(uq_ferry_places_dep$count, "pois")
+ferry_nb <- fitdist(uq_ferry_places_dep$count, "nbinom")
+
+par(mfrow = c(1,2))
+denscomp(list(ferry_poi, ferry_nb), legendtext = c("Poisson", "negative binomial"), fitlty = 1)
+cdfcomp(list(ferry_poi, ferry_nb), legendtext = c("Poisson", "negative binomial"), fitlty = 1)
+
+gofstat(list(ferry_poi, ferry_nb), fitnames = c("Poisson", "negative binomial"))
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+dev.off()
+```
+
+```{r eval=FALSE, include=FALSE}
+#### LOESS smoother
+L1 <- loess(count ~ time, data = uq_ferry_places_dep, span = 0.1)
+PL1 <- predict(L1, se = TRUE)
+
+plot(x = uq_ferry_places_dep$time, y = uq_ferry_places_dep$count)
+lines(uq_ferry_places_dep$time, PL1$fit)
+lines(uq_ferry_places_dep$time, PL1$fit + 2*PL1$se.fit, lty = 2)
+lines(uq_ferry_places_dep$time, PL1$fit - 2*PL1$se.fit, lty = 2)
+
+```
+
+```{r eval=FALSE, include=FALSE}
+#### naive linear
+glm.nb(count ~ time, data = uq_ferry_places_dep)
+glm.nb(count ~ popularity, data = uq_ferry_places_dep)
+glm.nb(count ~ time + popularity, data = uq_ferry_places_dep)
+```
+
+## Arrivals  
+
+```{r echo=FALSE}
+uq_ferry <- uq_campus_long_mode %>% 
+  filter(date >= ymd_hms("2016-08-15 00:00:00", tz = "Australia/Brisbane") & date <= ymd_hms("2016-08-21 23:59:59", tz = "Australia/Brisbane")) %>%
+  filter(site == "ferry") %>% 
+  filter(direction == "inbound") %>% 
+  arrange(date)
+
+uq_ferry$date_cat <- ymd_hms(cut(uq_ferry$date,
+                                 breaks = seq(ymd_hms("2016-08-15 00:00:00", 
+                                                      tz = "Australia/Brisbane"), 
+                                              ymd_hms("2016-08-22 00:00:00", 
+                                                      tz = "Australia/Brisbane"), 
+                                              as.difftime(1, units = "hours")),
+                                 include.lowest = TRUE), tz = "Australia/Brisbane")
+
+uq_ferry %<>% 
+  group_by(date_cat) %>% 
+  summarise(count = sum(count))
+
+uq_ferry_places <- bind_cols(date_cat = seq(ymd_hms("2016-08-15 00:00:00", 
+                                                    tz = "Australia/Brisbane"), 
+                                            ymd_hms("2016-08-21 23:59:00", 
+                                                    tz = "Australia/Brisbane"), 
+                                            as.difftime(1, units = "hours"))) %>% 
+  left_join(uq_ferry) %>% 
+  left_join(campus_places_ferry) %>% 
+  arrange(date_cat)
+
+rm(uq_ferry)
+```
+
+### Data
+
+```{r echo=FALSE}
+uq_ferry_places_arr <- uq_ferry_places %>% 
+  mutate(count = ifelse(test = is.na(count), yes = 0, no = count)) %>% 
+  mutate(time = as.numeric(date_cat) / 100) %>% 
+  mutate(hod = as.numeric(strftime(date_cat, "%H", tz = ""))) %>% 
+  mutate(dow = as.numeric(strftime(date_cat, "%d", tz = "")) - 14) %>% 
+  mutate(wknd = ifelse(test = dow >=6 & dow <= 7, yes = 1, no = 0))
+
+uq_ferry_places_arr$time <- uq_ferry_places_arr$time - min(uq_ferry_places_arr$time) 
+
+rm(uq_ferry_places)
+
+saveRDS(uq_ferry_places_arr, "data/counters/clean/uq_ferry_places_arr.Rds")
+
+uq_ferry_places_arr %>% 
+  ggplot(aes(x = date_cat, y = count)) + 
+  geom_col() + 
+  scale_x_datetime() + theme_minimal() + 
+  xlab("") + ylab("Hourly passenger counts") + 
+  geom_line(aes(y = popularity), col = "red") 
+```
+
+### Distribution of counts
+
+Frequency of counts from one week
+
+```{r echo=FALSE}
+uq_ferry_places_arr %>% 
+  ggplot(aes(x = count)) + 
+  geom_histogram() + 
+  gghighlight() +
+  theme_minimal() + 
+  xlab("") + ylab("Passenger counts") # + coord_polar()
+```
+
+```{r}
+# Best distribution:
+ferry_poi <- fitdist(uq_ferry_places_arr$count, "pois")
+ferry_nb <- fitdist(uq_ferry_places_arr$count, "nbinom")
+
+par(mfrow = c(1,2))
+denscomp(list(ferry_poi, ferry_nb), legendtext = c("Poisson", "negative binomial"), fitlty = 1)
+cdfcomp(list(ferry_poi, ferry_nb), legendtext = c("Poisson", "negative binomial"), fitlty = 1)
+
+gofstat(list(ferry_poi, ferry_nb), fitnames = c("Poisson", "negative binomial"))
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+dev.off()
+```
+
+```{r eval=FALSE, include=FALSE}
+#### LOESS smoother
+L1 <- loess(count ~ time, data = uq_ferry_places_arr, span = 0.1)
+PL1 <- predict(L1, se = TRUE)
+
+plot(x = uq_ferry_places_arr$time, y = uq_ferry_places_arr$count)
+lines(uq_ferry_places_arr$time, PL1$fit)
+lines(uq_ferry_places_arr$time, PL1$fit + 2*PL1$se.fit, lty = 2)
+lines(uq_ferry_places_arr$time, PL1$fit - 2*PL1$se.fit, lty = 2)
+
+```
+
+```{r eval=FALSE, include=FALSE}
+#### naive linear
+glm.nb(count ~ time, data = uq_ferry_places_arr)
+glm.nb(count ~ popularity, data = uq_ferry_places_arr)
+glm.nb(count ~ time + popularity, data = uq_ferry_places_arr)
+```
+
+# GAMs
+
+## Stocks at the terminal
+
+### Time only
+
+```{r}
+mod1 <- gam(count ~ 
+              s(time, k = 24, bs = "cr"), 
+            family = nb(), 
+            data = uq_ferry_places_agg)
+```
+
+```{r include=FALSE}
+summary(mod1)
+anova(mod1)
+anova(mod1)
+plot(mod1, shade = TRUE)
+gam.check(mod1)
+
+# P1 <- predict(mod1, newdata = uq_ferry_places_agg, se = TRUE)
+# 
+# plot(x = uq_ferry_places_agg$time, y = uq_ferry_places_agg$count)
+# lines(uq_ferry_places_agg$time, P1$fit)
+# lines(uq_ferry_places_agg$time, P1$fit + 2*P1$se.fit, lty = 2)
+# lines(uq_ferry_places_agg$time, P1$fit - 2*P1$se.fit, lty = 2)
+```
+
+### Two time smoothers
+
+```{r}
+mod2 <- gam(count ~ 
+              s(time, k = 24, bs = "cr") +
+              s(hod, k = 12, bs = "cc"), 
+            family = nb(), 
+            data = uq_ferry_places_agg)
+
+```
+
+```{r mod2ad, include=FALSE}
+summary(mod2)
+anova(mod2)
+anova(mod2, mod1)
+plot(mod2, shade = TRUE)
+gam.check(mod2)
+
+# P2 <- predict(mod2, newdata = uq_ferry_places_agg, se = TRUE)
+# 
+# plot(x = uq_ferry_places_agg$time, y = uq_ferry_places_agg$count)
+# lines(uq_ferry_places_agg$time, P2$fit)
+# lines(uq_ferry_places_agg$time, P2$fit + 2*P2$se.fit, lty = 2)
+# lines(uq_ferry_places_agg$time, P2$fit - 2*P2$se.fit, lty = 2)
+```
+
+
+### Time smoother & popularity
+
+```{r}
+mod3 <- gam(count ~ popularity + 
+              s(time, k = 24, bs = "cr"), 
+            family = nb(), 
+            data = uq_ferry_places_agg)
+```
+
+```{r include=FALSE}
+summary(mod3)
+anova(mod3)
+plot(mod3, shade = TRUE)
+gam.check(mod3)
+
+# P3 <- predict(mod3, newdata = uq_ferry_places_agg, se = TRUE)
+# 
+# plot(x = uq_ferry_places_agg$time, y = uq_ferry_places_agg$count)
+# lines(uq_ferry_places_agg$time, P3$fit)
+# lines(uq_ferry_places_agg$time, P3$fit + 2*P3$se.fit, lty = 2)
+# lines(uq_ferry_places_agg$time, P3$fit - 2*P3$se.fit, lty = 2)
+```
+
+### Two time smoothers & popularity
+
+```{r}
+mod4 <- gam(count ~ s(popularity, k = 6, bs = "cr") + 
+              s(time, k = 24, bs = "cr") +
+              s(hod, k = 12, bs = "cc"), 
+            family = nb(), 
+            data = uq_ferry_places_agg)
+```
+
+```{r mod4ad, include=FALSE}
+summary(mod4)
+# anova(mod3, mod4)
+# plot(mod4, shade = TRUE)
+# gam.check(mod4)
+draw(mod4)
+appraise(mod4)
+
+# P4 <- predict(mod4, newdata = uq_ferry_places_agg, se = TRUE)
+# 
+# plot(x = uq_ferry_places_agg$time, y = uq_ferry_places_agg$count)
+# lines(uq_ferry_places_agg$time, exp(P4$fit))
+# lines(uq_ferry_places_agg$time, exp(P4$fit + 2*P4$se.fit), lty = 2)
+# lines(uq_ferry_places_agg$time, exp(P4$fit - 2*P4$se.fit), lty = 2)
+
+```
+
+### Comparing
+
+```{r echo=FALSE}
+# AIC(mod1, mod2, mod3, mod4)
+# BIC(mod1, mod2, mod3, mod4)
+
+dotchart(c(AIC(mod1), AIC(mod2), AIC(mod3), AIC(mod4)),
+         labels = c("mod1", "mod2", "mod3", "mod4"), main = "AIC")
+
+dotchart(c(BIC(mod1), BIC(mod2), BIC(mod3), BIC(mod4)),
+         labels = c("mod1", "mod2", "mod3", "mod4"), main = "BIC")
+```
+
+### `mod4`
+
+Summary
+
+```{r ref.label='mod4ad', echo=FALSE}
+```
+
+Fitted values
+
+```{r echo=FALSE}
+P4 <- predict(mod4, newdata = uq_ferry_places_agg, se = TRUE)
+
+P4res <- tibble(
+  x = uq_ferry_places_agg$time, 
+  y = uq_ferry_places_agg$count,
+  fit = exp(P4$fit),
+  lci = exp(P4$fit - 2*P4$se.fit),
+  uci = exp(P4$fit + 2*P4$se.fit)
+)
+
+ggplot(P4res, aes(x = x)) +
+  geom_ribbon(aes(ymin=lci, ymax=uci), alpha=0.3) +
+  geom_line(aes(y = fit), color = "purple") +
+  geom_point(aes(y = y), alpha = 0.5) +
+  theme_minimal() + ylab("Counts") + xlab("Time")
+```
+
+
+## Departures 
+
+### Time only
+
+```{r}
+mod1 <- gam(count ~ 
+              s(time, k = 24, bs = "cr"), 
+            family = nb(), 
+            data = uq_ferry_places_dep)
+```
+
+```{r include=FALSE}
+summary(mod1)
+anova(mod1)
+anova(mod1)
+plot(mod1, shade = TRUE)
+gam.check(mod1)
+
+# P1 <- predict(mod1, newdata = uq_ferry_places_dep, se = TRUE)
+# 
+# plot(x = uq_ferry_places_dep$time, y = uq_ferry_places_dep$count)
+# lines(uq_ferry_places_dep$time, P1$fit)
+# lines(uq_ferry_places_dep$time, P1$fit + 2*P1$se.fit, lty = 2)
+# lines(uq_ferry_places_dep$time, P1$fit - 2*P1$se.fit, lty = 2)
+```
+
+### Two time smoothers
+
+```{r}
+mod2 <- gam(count ~ 
+              s(time, k = 24, bs = "cr") +
+              s(hod, k = 12, bs = "cc"), 
+            family = nb(), 
+            data = uq_ferry_places_dep)
+
+```
+
+```{r mod2d, include=FALSE}
+summary(mod2)
+anova(mod2)
+anova(mod2, mod1)
+plot(mod2, shade = TRUE)
+gam.check(mod2)
+
+# P2 <- predict(mod2, newdata = uq_ferry_places_dep, se = TRUE)
+# 
+# plot(x = uq_ferry_places_dep$time, y = uq_ferry_places_dep$count)
+# lines(uq_ferry_places_dep$time, P2$fit)
+# lines(uq_ferry_places_dep$time, P2$fit + 2*P2$se.fit, lty = 2)
+# lines(uq_ferry_places_dep$time, P2$fit - 2*P2$se.fit, lty = 2)
+```
+
+### Time & popularity
+
+```{r}
+mod3 <- gam(count ~ popularity + 
+              s(time, k = 24, bs = "cr"), 
+            family = nb(), 
+            data = uq_ferry_places_dep)
+```
+
+```{r include=FALSE}
+summary(mod3)
+anova(mod3)
+plot(mod3, shade = TRUE)
+gam.check(mod3)
+
+# P3 <- predict(mod3, newdata = uq_ferry_places_dep, se = TRUE)
+# 
+# plot(x = uq_ferry_places_dep$time, y = uq_ferry_places_dep$count)
+# lines(uq_ferry_places_dep$time, P3$fit)
+# lines(uq_ferry_places_dep$time, P3$fit + 2*P3$se.fit, lty = 2)
+# lines(uq_ferry_places_dep$time, P3$fit - 2*P3$se.fit, lty = 2)
+```
+
+### Two time smoothers & popularity
+
+```{r}
+mod4 <- gam(count ~ s(popularity, k = 6, bs = "cr") + 
+              s(time, k = 24, bs = "cr") +
+              s(hod, k = 12, bs = "cc"),
+            family = nb(), 
+            data = uq_ferry_places_dep)
+```
+
+```{r mod4d, include=FALSE}
+summary(mod4)
+# anova(mod3, mod4)
+# plot(mod4, shade = TRUE)
+# gam.check(mod4)
+draw(mod4)
+appraise(mod4)
+
+# P4 <- predict(mod4, newdata = uq_ferry_places_dep, se = TRUE)
+# 
+# plot(x = uq_ferry_places_dep$time, y = uq_ferry_places_dep$count)
+# lines(uq_ferry_places_dep$time, P4$fit)
+# lines(uq_ferry_places_dep$time, P4$fit + 2*P4$se.fit, lty = 2)
+# lines(uq_ferry_places_dep$time, P4$fit - 2*P4$se.fit, lty = 2)
+```
+
+### Comparing
+
+```{r echo=FALSE}
+# AIC(mod1, mod2, mod3, mod4)
+# BIC(mod1, mod2, mod3, mod4)
+
+dotchart(c(AIC(mod1), AIC(mod2), AIC(mod3), AIC(mod4)),
+         labels = c("mod1", "mod2", "mod3", "mod4"), main = "AIC")
+
+dotchart(c(BIC(mod1), BIC(mod2), BIC(mod3), BIC(mod4)),
+         labels = c("mod1", "mod2", "mod3", "mod4"), main = "BIC")
+```
+
+### `mod4`
+
+Summary
+
+```{r ref.label='mod4d', echo=FALSE}
+```
+
+Fitted values 
+
+```{r echo=FALSE}
+P4 <- predict(mod4, newdata = uq_ferry_places_dep, se = TRUE)
+
+P4res <- tibble(
+  x = uq_ferry_places_dep$time, 
+  y = uq_ferry_places_dep$count,
+  fit = exp(P4$fit),
+  lci = exp(P4$fit - 2*P4$se.fit),
+  uci = exp(P4$fit + 2*P4$se.fit)
+)
+
+ggplot(P4res, aes(x = x)) +
+  geom_ribbon(aes(ymin=lci, ymax=uci), alpha=0.3) +
+  geom_line(aes(y = fit), color = "purple") +
+  geom_point(aes(y = y), alpha = 0.5) +
+  theme_minimal() + ylab("Counts") + xlab("Time")
+```
+
+## Arrivals 
+
+### Time only
+
+```{r}
+mod1 <- gam(count ~ 
+              s(time, k = 24, bs = "cr"), 
+            family = nb(), 
+            data = uq_ferry_places_arr)
+```
+
+```{r include=FALSE}
+summary(mod1)
+anova(mod1)
+anova(mod1)
+plot(mod1, shade = TRUE)
+gam.check(mod1)
+
+# P1 <- predict(mod1, newdata = uq_ferry_places_arr, se = TRUE)
+# 
+# plot(x = uq_ferry_places_arr$time, y = uq_ferry_places_arr$count)
+# lines(uq_ferry_places_arr$time, P1$fit)
+# lines(uq_ferry_places_arr$time, P1$fit + 2*P1$se.fit, lty = 2)
+# lines(uq_ferry_places_arr$time, P1$fit - 2*P1$se.fit, lty = 2)
+```
+
+### Two time smoothers
+
+```{r}
+mod2 <- gam(count ~ 
+              s(time, k = 24, bs = "cr") +
+              s(hod, k = 12, bs = "cc"), 
+            family = nb(), 
+            data = uq_ferry_places_arr)
+
+```
+
+```{r include=FALSE}
+summary(mod2)
+anova(mod2)
+anova(mod2, mod1)
+plot(mod2, shade = TRUE)
+gam.check(mod2)
+
+# P2 <- predict(mod2, newdata = uq_ferry_places_arr, se = TRUE)
+# 
+# plot(x = uq_ferry_places_arr$time, y = uq_ferry_places_arr$count)
+# lines(uq_ferry_places_arr$time, P2$fit)
+# lines(uq_ferry_places_arr$time, P2$fit + 2*P2$se.fit, lty = 2)
+# lines(uq_ferry_places_arr$time, P2$fit - 2*P2$se.fit, lty = 2)
+```
+
+### Time & popularity
+
+```{r}
+mod3 <- gam(count ~ popularity + 
+              s(time, k = 24, bs = "cr"), 
+            family = nb(), 
+            data = uq_ferry_places_arr)
+```
+
+```{r include=FALSE}
+summary(mod3)
+anova(mod3)
+plot(mod3, shade = TRUE)
+gam.check(mod3)
+
+# P3 <- predict(mod3, newdata = uq_ferry_places_arr, se = TRUE)
+# 
+# plot(x = uq_ferry_places_arr$time, y = uq_ferry_places_arr$count)
+# lines(uq_ferry_places_arr$time, P3$fit)
+# lines(uq_ferry_places_arr$time, P3$fit + 2*P3$se.fit, lty = 2)
+# lines(uq_ferry_places_arr$time, P3$fit - 2*P3$se.fit, lty = 2)
+```
+
+### Two time smoothers & popularity
+
+```{r}
+mod4 <- gam(count ~ s(popularity, k = 6, bs = "cr") + 
+              s(time, k = 24, bs = "cr") +
+              s(hod, k = 12, bs = "cc"),
+            family = nb(), 
+            data = uq_ferry_places_arr)
+```
+
+```{r mod4a, include=FALSE}
+summary(mod4)
+# anova(mod3, mod4)
+# plot(mod4, shade = TRUE)
+# gam.check(mod4)
+
+draw(mod4)
+appraise(mod4)
+
+# P4 <- predict(mod4, newdata = uq_ferry_places_arr, se = TRUE)
+# 
+# plot(x = uq_ferry_places_arr$time, y = uq_ferry_places_arr$count)
+# lines(uq_ferry_places_arr$time, P4$fit)
+# lines(uq_ferry_places_arr$time, P4$fit + 2*P4$se.fit, lty = 2)
+# lines(uq_ferry_places_arr$time, P4$fit - 2*P4$se.fit, lty = 2)
+```
+
+### Comparing
+
+```{r echo=FALSE}
+# AIC(mod1, mod2, mod3, mod4)
+# BIC(mod1, mod2, mod3, mod4)
+
+dotchart(c(AIC(mod1), AIC(mod2), AIC(mod3), AIC(mod4)),
+         labels = c("mod1", "mod2", "mod3", "mod4"), main = "AIC")
+
+dotchart(c(BIC(mod1), BIC(mod2), BIC(mod3), BIC(mod4)),
+         labels = c("mod1", "mod2", "mod3", "mod4"), main = "BIC")
+```
+
+### `mod4`
+
+Summary 
+
+```{r ref.label='mod4a',echo=FALSE}
+```
+
+Fitted values 
+
+```{r echo=FALSE}
+P4 <- predict(mod4, newdata = uq_ferry_places_arr, se = TRUE)
+
+P4res <- tibble(
+  x = uq_ferry_places_arr$time, 
+  y = uq_ferry_places_arr$count,
+  fit = exp(P4$fit),
+  lci = exp(P4$fit - 2*P4$se.fit),
+  uci = exp(P4$fit + 2*P4$se.fit)
+)
+
+ggplot(P4res, aes(x = x)) +
+  geom_ribbon(aes(ymin=lci, ymax=uci), alpha=0.3) +
+  geom_line(aes(y = fit), color = "purple") +
+  geom_point(aes(y = y), alpha = 0.5) +
+  theme_minimal() + ylab("Counts") + xlab("Time")
+```
+
+
+# INLA
+
+## Setup
+
+```{r echo=TRUE, results='hide'}
+# ####
+# Jeffreys prior 
+a1 <- 5e-5
+b1 <- 5e-5
+lgprior1 <- list(prec = list(param = c(a1, b1)))
+
+# Gelman prior
+a2 <- -0.5
+b2 <- 5e-5
+lgprior2 <- list(prec = list(param = c(a2, b2)))
+
+# iid prior 
+# Schrödle & Held 2010 & Blangiardo et al 2013
+a0 <- 1
+b0 <- 0.1
+prior.nu <- list(prec = list(param = c(a0, b0)))
+
+# intercept & fixed
+inla.set.control.fixed.default() 
+
+# intercept ~ N(0,0) 
+# other fixed effects ~ N(0, 0.001) 
+# 
+# where the format is N(mean, precision) 
+# precision = inverse of the variance. 
+
+# PC prior
+U <- 1
+hyper.prec = list(theta = list(
+  prior = "pc.prec",
+  param = c(U, 0.01)
+))
+
+# scaling
+inla.setOption(scale.model.default = TRUE)
+
+```
+
+## Stocks at the terminal
+
+### Two time smoothers (rw1)
+
+```{r}
+mod1 <- inla(count ~ f(time, model = "rw1", hyper = hyper.prec) + f(hod, model = "rw1", hyper = hyper.prec), 
+             family = "nbinomial", 
+             control.compute = list(dic= TRUE, waic = TRUE),  
+             data = uq_ferry_places_agg)
+```
+
+```{r include=FALSE}
+summary(mod1)
+autoplot(mod1)
+
+P1_time <- mod1$summary.random$time
+P1_hod <- mod1$summary.random$hod
+P1_fit <- mod1$summary.fitted.values
+```
+
+### Two time smoothers (rw2)
+
+```{r}
+mod2 <- inla(count ~ f(time, model = "rw2", hyper = hyper.prec) + f(hod, model = "rw2", hyper = hyper.prec), 
+             family = "nbinomial", 
+             control.compute = list(dic= TRUE, waic = TRUE),  
+             data = uq_ferry_places_agg)
+```
+
+```{r include=FALSE}
+summary(mod2)
+autoplot(mod2)
+
+P2_time <- mod2$summary.random$time
+P2_hod <- mod2$summary.random$hod
+P2_fit <- mod2$summary.fitted.values
+```
+
+### Two time smoothers + smooth covariate (rw1)
+
+```{r}
+mod3 <- inla(count ~ f(popularity, model = "rw1", hyper = hyper.prec) + f(time, model = "rw1", hyper = hyper.prec) + f(hod, model = "rw1", hyper = hyper.prec), 
+             family = "nbinomial", 
+             control.compute = list(dic= TRUE, waic = TRUE),  
+             data = uq_ferry_places_agg)
+```
+
+```{r Imod3ad, include=FALSE}
+summary(mod3)
+autoplot(mod3)
+
+# P3_time <- mod3$summary.random$time
+# P3_hod <- mod3$summary.random$hod
+# P3_fit <- mod3$summary.fitted.values
+```
+
+### Two time smoothers + smooth covariate (rw2)
+
+```{r}
+mod4 <- inla(count ~ f(popularity, model = "rw2", hyper = hyper.prec) + f(time, model = "rw2", hyper = hyper.prec) + f(hod, model = "rw2", hyper = hyper.prec), 
+             family = "nbinomial", 
+             control.compute = list(dic= TRUE, waic = TRUE),  
+             data = uq_ferry_places_agg)
+```
+
+```{r include=FALSE}
+summary(mod4)
+autoplot(mod4)
+
+P4_time <- mod4$summary.random$time
+P4_hod <- mod4$summary.random$hod
+P4_fit <- mod4$summary.fitted.values
+```
+
+### Comparing
+
+```{r echo=FALSE}
+dotchart(c(mod1$dic$dic, mod2$dic$dic, mod3$dic$dic, mod4$dic$dic),
+         labels = c("mod1", "mod2", "mod3", "mod4"), main = "DIC")
+
+dotchart(c(mod1$waic$waic, mod2$waic$waic, mod3$waic$waic, mod4$waic$waic),
+         labels = c("mod1", "mod2", "mod3", "mod4"), main = "WAIC")
+```
+
+###  `mod3`
+
+Summary 
+
+```{r ref.label='Imod3ad', echo=FALSE}
+```
+
+Fitted values 
+
+```{r echo=FALSE}
+P3_fit <- mod3$summary.fitted.values
+
+P3_fit$x <- uq_ferry_places_agg$time
+P3_fit$y <- uq_ferry_places_agg$count
+
+ggplot(P3_fit, aes(x = x)) +
+  geom_ribbon(aes(ymin = `0.025quant`, ymax = `0.975quant`), alpha=0.3) +
+  geom_line(aes(y = `0.5quant`), color = "purple") +
+  geom_point(aes(y = y), alpha = 0.5) +
+  theme_minimal() + ylab("Counts") + xlab("Time")
+```
+
+## Departures 
+
+### Two time smoothers (rw1)
+
+```{r}
+mod1 <- inla(count ~ f(time, model = "rw1", hyper = hyper.prec) + f(hod, model = "rw1", hyper = hyper.prec), 
+             family = "nbinomial", 
+             control.compute = list(dic= TRUE, waic = TRUE),  
+             data = uq_ferry_places_dep)
+```
+
+```{r Imod1d, include=FALSE}
+summary(mod1)
+autoplot(mod1)
+
+P1_time <- mod1$summary.random$time
+P1_hod <- mod1$summary.random$hod
+P1_fit <- mod1$summary.fitted.values
+```
+
+### Two time smoothers (rw2)
+
+```{r}
+mod2 <- inla(count ~ f(time, model = "rw2", hyper = hyper.prec) + f(hod, model = "rw2", hyper = hyper.prec), 
+             family = "nbinomial", 
+             control.compute = list(dic= TRUE, waic = TRUE),  
+             data = uq_ferry_places_dep)
+```
+
+```{r include=FALSE}
+summary(mod2)
+autoplot(mod2)
+
+P2_time <- mod2$summary.random$time
+P2_hod <- mod2$summary.random$hod
+P2_fit <- mod2$summary.fitted.values
+```
+
+### Two time smoothers + smooth covariate (rw1)
+
+```{r}
+mod3 <- inla(count ~ f(popularity, model = "rw1", hyper = hyper.prec) + f(time, model = "rw1", hyper = hyper.prec) + f(hod, model = "rw1", hyper = hyper.prec), 
+             family = "nbinomial", 
+             control.compute = list(dic= TRUE, waic = TRUE),  
+             data = uq_ferry_places_dep)
+```
+
+```{r Imod3d, include=FALSE}
+summary(mod3)
+autoplot(mod3)
+
+P3_time <- mod3$summary.random$time
+P3_hod <- mod3$summary.random$hod
+P3_fit <- mod3$summary.fitted.values
+```
+
+### Two time smoothers + smooth covariate (rw2)
+
+```{r}
+mod4 <- inla(count ~ f(popularity, model = "rw2", hyper = hyper.prec) + f(time, model = "rw2", hyper = hyper.prec) + f(hod, model = "rw2", hyper = hyper.prec), 
+             family = "nbinomial", 
+             control.compute = list(dic= TRUE, waic = TRUE),  
+             data = uq_ferry_places_dep)
+```
+
+```{r Imod4d, include=FALSE}
+summary(mod4)
+autoplot(mod4)
+
+# P4_time <- mod4$summary.random$time
+# P4_hod <- mod4$summary.random$hod
+# P4_fit <- mod4$summary.fitted.values
+```
+
+### Comparing
+
+```{r echo=FALSE}
+dotchart(c(mod1$dic$dic, mod2$dic$dic, mod3$dic$dic, mod4$dic$dic),
+         labels = c("mod1", "mod2", "mod3", "mod4"), main = "DIC")
+
+dotchart(c(mod1$waic$waic, mod2$waic$waic, mod3$waic$waic, mod4$waic$waic),
+         labels = c("mod1", "mod2", "mod3", "mod4"), main = "WAIC")
+```
+
+### `mod3`
+
+Summary
+
+```{r ref.label='Imod3d', echo=FALSE}
+```
+
+Fitted values 
+
+```{r echo=FALSE}
+P3_fit <- mod3$summary.fitted.values
+
+P3_fit$x <- uq_ferry_places_dep$time
+P3_fit$y <- uq_ferry_places_dep$count
+
+ggplot(P3_fit, aes(x = x)) +
+  geom_ribbon(aes(ymin = `0.025quant`, ymax = `0.975quant`), alpha=0.3) +
+  geom_line(aes(y = `0.5quant`), color = "purple") +
+  geom_point(aes(y = y), alpha = 0.5) +
+  theme_minimal() + ylab("Counts") + xlab("Time")
+```
+
+## Arrivals
+
+### Two time smoothers (rw1)
+
+```{r}
+mod1 <- inla(count ~ f(time, model = "rw1", hyper = hyper.prec) + f(hod, model = "rw1", hyper = hyper.prec), 
+             family = "nbinomial", 
+             control.compute = list(dic= TRUE, waic = TRUE),  
+             data = uq_ferry_places_arr)
+```
+
+```{r include=FALSE}
+summary(mod1)
+autoplot(mod1)
+
+P1_time <- mod1$summary.random$time
+P1_hod <- mod1$summary.random$hod
+P1_fit <- mod1$summary.fitted.values
+```
+
+### Two time smoothers (rw2)
+
+```{r}
+mod2 <- inla(count ~ f(time, model = "rw2", hyper = hyper.prec) + f(hod, model = "rw2", hyper = hyper.prec), 
+             family = "nbinomial", 
+             control.compute = list(dic= TRUE, waic = TRUE),  
+             data = uq_ferry_places_arr)
+```
+
+```{r include=FALSE}
+summary(mod2)
+autoplot(mod2)
+
+P2_time <- mod2$summary.random$time
+P2_hod <- mod2$summary.random$hod
+P2_fit <- mod2$summary.fitted.values
+```
+
+### Two time smoothers + smooth covariate (rw1)
+
+```{r Imod3a, include=FALSE}
+mod3 <- inla(count ~ f(popularity, model = "rw1", hyper = hyper.prec) + f(time, model = "rw1", hyper = hyper.prec) + f(hod, model = "rw1", hyper = hyper.prec), 
+             family = "nbinomial", 
+             control.compute = list(dic= TRUE, waic = TRUE),  
+             data = uq_ferry_places_arr)
+```
+
+```{r include=FALSE}
+summary(mod3)
+autoplot(mod3)
+
+P3_time <- mod3$summary.random$time
+P3_hod <- mod3$summary.random$hod
+P3_fit <- mod3$summary.fitted.values
+```
+
+### Two time smoothers + smooth covariate (rw2)
+
+```{r}
+mod4 <- inla(count ~ f(popularity, model = "rw2", hyper = hyper.prec) + f(time, model = "rw2", hyper = hyper.prec) + f(hod, model = "rw2", hyper = hyper.prec), 
+             family = "nbinomial", 
+             control.compute = list(dic= TRUE, waic = TRUE),  
+             data = uq_ferry_places_arr)
+```
+
+```{r Imod4a, include=FALSE}
+summary(mod4)
+autoplot(mod4)
+
+# P4_time <- mod4$summary.random$time
+# P4_hod <- mod4$summary.random$hod
+# P4_fit <- mod4$summary.fitted.values
+```
+
+### Comparing
+
+```{r echo=FALSE}
+dotchart(c(mod1$dic$dic, mod2$dic$dic, mod3$dic$dic, mod4$dic$dic),
+         labels = c("mod1", "mod2", "mod3", "mod4"), main = "DIC")
+
+dotchart(c(mod1$waic$waic, mod2$waic$waic, mod3$waic$waic, mod4$waic$waic),
+         labels = c("mod1", "mod2", "mod3", "mod4"), main = "WAIC")
+```
+
+### `mod3`
+
+Summary
+
+```{r ref.label='Imod3a', echo=FALSE}
+```
+
+Fitted values
+
+```{r}
+P3_fit <- mod3$summary.fitted.values
+
+P3_fit$x <- uq_ferry_places_arr$time
+P3_fit$y <- uq_ferry_places_arr$count
+
+ggplot(P3_fit, aes(x = x)) +
+  geom_ribbon(aes(ymin = `0.025quant`, ymax = `0.975quant`), alpha=0.3) +
+  geom_line(aes(y = `0.5quant`), color = "purple") +
+  geom_point(aes(y = y), alpha = 0.5) +
+  theme_minimal() + ylab("Counts") + xlab("Time")
+```

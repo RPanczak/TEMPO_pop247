@@ -1,0 +1,784 @@
+---
+title: "Google Places"
+author: "Radoslaw Panczak"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  ioslides_presentation:
+    css: style.css
+    smaller: yes
+subtitle: First results
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = FALSE, warning=FALSE, cache = FALSE)
+
+set.seed(12345)
+
+library(readxl)
+library(tidyverse)
+library(knitr)
+library(kableExtra)
+library(anytime)
+library(rgdal)
+library(sp)
+library(sf)
+library(mapview)
+library(ggmap)  
+# library(gganimate)
+library(animation)
+library(scales)
+library(Matrix)
+library(rms)
+# library(arm)
+library(sjPlot)
+library(sjmisc)
+# library(sjlabelled)
+library(Amelia)
+library(xlsx)
+
+```
+
+
+## Introduction 
+
+These are preliminary results from the scraped Google Places data for Brisbane area.
+
+Place is a location uniquely defined by Google, and can include places in the same physical location (ie. duplicated coordinates). 
+
+The results focus on places where 'popular times' were available. 
+
+The exact algorithm on how this 'popularity' is determined is, of course, **unknown**.
+
+![Best case scenario? Caltex Woolworths Stafford petrol station](images/popularity_regular.png)
+
+## Raw data
+
+```{r read, include=FALSE}
+# read data, remove reviews for now, clean unix dates
+places <- read_csv("./data/google_places/raw/export0.csv") %>% 
+  dplyr::select(-detail_data.0.url, -detail_collection_dates.0, -detail_data.0.website, -detail_data.0.formatted_phone_number, -detail_data.0.rating, 
+                -detail_data.0.reviews.0.rating, -detail_data.0.reviews.0.text, -detail_data.0.reviews.0.rating, 
+                -detail_data.0.reviews.1.rating, -detail_data.0.reviews.1.text, -detail_data.0.reviews.1.rating, 
+                -detail_data.0.reviews.2.rating, -detail_data.0.reviews.2.text, -detail_data.0.reviews.2.rating, 
+                -detail_data.0.reviews.3.rating, -detail_data.0.reviews.3.text, -detail_data.0.reviews.3.rating, 
+                -detail_data.0.reviews.4.rating, -detail_data.0.reviews.4.text, -detail_data.0.reviews.4.rating, 
+                scrape_dates.0)  %>% 
+  mutate(detail_data.0.reviews.0.time = anytime::anydate(detail_data.0.reviews.0.time, asUTC = TRUE),
+         detail_data.0.reviews.1.time = anytime::anytime(detail_data.0.reviews.1.time, asUTC = TRUE),
+         detail_data.0.reviews.2.time = anytime::anytime(detail_data.0.reviews.2.time, asUTC = TRUE),
+         detail_data.0.reviews.3.time = anytime::anytime(detail_data.0.reviews.3.time, asUTC = TRUE),
+         detail_data.0.reviews.4.time = anytime::anytime(detail_data.0.reviews.4.time, asUTC = TRUE),
+         scrape_dates.0 = anytime::anydate(scrape_dates.0)) %>% 
+  mutate(detail_data.0.reviews.1.time = anytime::anydate(detail_data.0.reviews.1.time, asUTC = TRUE),
+         detail_data.0.reviews.2.time = anytime::anydate(detail_data.0.reviews.2.time, asUTC = TRUE),
+         detail_data.0.reviews.3.time = anytime::anydate(detail_data.0.reviews.3.time, asUTC = TRUE),
+         detail_data.0.reviews.4.time = anytime::anydate(detail_data.0.reviews.4.time, asUTC = TRUE)
+  )
+
+# View(places)
+```
+
+Raw dataset consists of: 
+
+- `r nrow(places)` records, with each record being a 'place' with unique Google ID
+- `r length(unique(places$geometry.location.lat, places$geometry.location.lng))` unique locations (defined as lat long pairs)
+- 11 levels of place description
+- Exact time, relative time and content of reviews of the place
+- 'popular times' values, coded on hourly basis for each day of the week, ie. (potentially) 168 values for each place
+
+
+## Derived variables
+
+```{r derived_vars, include=FALSE}
+# binary indicator of completeness
+places %>% 
+  dplyr::select(scrape_data.0.popular_times.0:scrape_data.0.popular_times.167) %>% 
+  rowSums(na.rm=FALSE) -> places$popular_complete
+
+places <- places %>% 
+  dplyr::mutate(popular_complete = replace(popular_complete, !is.na(popular_complete), 1)) %>% 
+  dplyr::mutate(popular_complete = replace(popular_complete, is.na(popular_complete), 0))
+
+places$popular_complete <- factor(places$popular_complete,
+                                  levels = c(0:1),
+                                  labels = c("Incomplete", "Complete"))
+
+table(places$popular_complete)
+
+# percentage complete
+places$popular_filled <- (rowSums(!is.na( dplyr::select(places, scrape_data.0.popular_times.0:scrape_data.0.popular_times.167) )) / 168 ) * 100
+summary(places$popular_filled)
+
+# any popular times available
+places <- places %>% 
+  mutate(popular_any = cut(popular_filled, breaks = c(-Inf, 0, (167/168)*100, Inf), right = TRUE, 
+                           labels = c("None", "Some", "Complete")))
+
+table(places$popular_any)
+
+# mean popular times
+places$popular_means <- rowMeans( dplyr::select(places, scrape_data.0.popular_times.0:scrape_data.0.popular_times.167 ), na.rm = TRUE)
+summary(places$popular_means)
+
+# other checks
+# review dates 
+summary(places$detail_data.0.reviews.0.time)
+summary(places$detail_data.0.reviews.1.time)
+
+# statistical units
+sort(table(places$asgs.SA2_NAME16), decreasing=T)
+sort(table(places$asgs.SA4_NAME16), decreasing=T)
+
+# set_label(places$popular_complete) <- "Complete popular times"
+# set_label(places$popular_filled) <- "Percent filled popular times"
+# set_label(places$popular_any) <- "Category filled popular times"
+# set_label(places$popular_means) <- "Mean value of popular times"
+
+
+# spatial 
+sf_places <- st_as_sf(x = filter(places, popular_filled > 0), 
+                      coords = c("geometry.location.lng", "geometry.location.lat"),
+                      crs = "+proj=longlat +datum=WGS84")
+sp_places <- as(sf_places, "Spatial")
+
+# plot(st_geometry(sf_places))
+# plot(sp_places)
+
+
+sp_cbd <- readOGR("./Data/geo/ABS/clean/sa2_2016_aust", "SA2_2016_AUST_brisbane_city_plus", verbose = FALSE)
+
+bbox_cbd <- sp::bbox(sp_cbd)
+(ggmap_cbd <- ggmap(get_map(location = bbox_cbd, zoom = 14, 
+                            source = "google", maptype = "terrain", color = "bw")))
+
+bbox_all <- sp::bbox(sp_places)
+(ggmap_all <- ggmap(get_map(location = bbox_all, zoom = 12, # zoom adapted!
+                            source = "google", maptype = "terrain", color = "bw")))
+
+# (ggmap_all <- ggmap(get_map(location = bbox_all, zoom = 12, # zoom adapted!
+#                             source = "stamen", maptype = "toner", color = "bw")))
+
+
+# checking hotels
+hotels <- places %>% 
+  dplyr::filter(grepl("otel", name)) %>% 
+  dplyr::select(name, types.0, popular_any, popular_filled) %>% 
+  arrange(types.0)
+
+write.xlsx(hotels, "./data/google_places/clean/hotels.xlsx")
+
+ggplot(hotels, aes(types.0)) + 
+  geom_bar() +
+  facet_wrap( ~ popular_any) +
+  coord_flip()
+
+ggsave("./data/google_places/clean/hotels.png")
+
+```
+
+Variables derived from original values include: 
+
+- `popular_complete` - binary indicator of completeness of popular times, where all 168 vlues are filled
+- `popular_any` - categorical indicator of popular times availability (values: None, Some, Complete)
+- `popular_filled` - percentage of popularity timepoints with values (0%-100% range, 168 times filled = 100%)
+- `popular_means` mean popular time of a place (overall)
+- Original time range of 0-167 was recoded into days of the week, time of the day and combination of the above (for instance: `Fri 20:00-20:59`)
+- Dataset was also saved in 'tidy' format of one observation per place and time.
+
+
+## No 'popular times'?
+
+![Legitimate?](images/popularity_closed.png)
+<br>
+![Not so good?](images/popularity_enough.png)
+<br>
+
+## Availability of 'popular times' 
+
+Only small amount of places has any information on popularity, with a tiny fraction having complete info:  
+
+```{r table_popular_any, echo=FALSE}
+sjt.frq(places$popular_any, digits = 1, title = "")
+```
+
+<br>
+**Note:** From this point forward only places with any information on popular times will be analyzed. 
+
+```{r select_write_long, include=FALSE}
+
+# write_csv(places, "./data/google_places/clean/places.csv", na = "", append = FALSE)
+
+places <- places %>% 
+  dplyr::filter(popular_any != "None") %>% 
+  dplyr::mutate(popular_any = factor(popular_any)) 
+
+write_csv(places, "./data/google_places/clean/places.csv", na = "", append = FALSE)
+
+
+# switch to long format >> ONLY THOSE WITH ANY TIME DATA !!!
+places_long <- places %>% 
+  # filter(popular_filled > 0) %>% 
+  tidyr::gather(time, popularity, scrape_data.0.popular_times.0:scrape_data.0.popular_times.167) 
+
+# 'time' for popularity is number in 0 - 167 range
+places_long$time <- as.numeric(gsub("scrape_data.0.popular_times.", "", places_long$time))
+table(places_long$time)
+
+# day of the week
+places_long$dow <- cut(places_long$time, breaks = seq(0, 168, by = 24), right = FALSE)
+# table(places_long$dow)
+levels(places_long$dow)
+places_long$dow <- recode(places_long$dow, 
+                          `[0,24)` = "Sun", `[24,48)` = "Mon", `[48,72)` = "Tue", `[72,96)` = "Wed", 
+                          `[96,120)` = "Thu", `[120,144)` = "Fri", `[144,168)` = "Sat")
+table(places_long$dow)
+table(places_long$time, places_long$dow)
+
+# time of the day
+# might need to use ordered factor?
+places_long$tod <- places_long$time - ((as.numeric(places_long$dow) -1) * 24)
+
+places_long$tod <- factor(places_long$tod,
+                          levels = c(0:23),
+                          labels = c("00:00-00:59", "01:00-01:59", "02:00-02:59", "03:00-03:59", "04:00-04:59", "05:00-05:59", 
+                                     "06:00-06:59","07:00-07:59", "08:00-08:59", "09:00-09:59", "10:00-10:59", "11:00-11:59", 
+                                     "12:00-12:59", "13:00-13:59", "14:00-14:59", "15:00-15:59", "16:00-16:59", "17:00-17:59", 
+                                     "18:00-18:59", "19:00-19:59", "20:00-20:59", "21:00-21:59", "22:00-22:59", "23:00-23:59"))
+
+table(places_long$tod)
+table(places_long$time, places_long$tod)
+
+# time string with dow tod together
+
+# ugly hack needed for time to be '003' in order for gganimate tto work correctly
+# places_long$tstring <- paste(as.character(formatC(places_long$time, width=3, flag="0")), ":", 
+#                              as.character(places_long$dow), as.character(places_long$tod), sep = " ")
+
+places_long$tstring <- paste(as.character(places_long$dow), as.character(places_long$tod), sep = " ")
+times <- as.character(unique(unlist(places_long$tstring)))
+
+# must be nice and symetrical here
+table(places_long$tod, places_long$dow)
+
+
+# popular times
+# % missings in long format
+round((sum(is.na(places_long$popularity)) / nrow(places_long)) * 100, 1)
+
+summary(places_long$popularity)
+
+write_csv(places_long, "./data/google_places/clean/places_long.csv", na = "", append = FALSE)
+
+# spatial
+sf_places_long <- st_as_sf(x = places_long, 
+                           coords = c("geometry.location.lng", "geometry.location.lat"),
+                           crs = "+proj=longlat +datum=WGS84")
+
+sp_places_long <- as(sf_places_long, "Spatial")
+
+```
+
+
+## Big variety of types of places (1)
+
+```{r table_types.0, echo=FALSE}
+
+# sort(table(places$types.0), decreasing=TRUE)
+# sort(table(places$types.1), decreasing=T)
+# sort(table(places$types.2), decreasing=T)
+# sort(table(places$types.3), decreasing=T)
+# sort(table(places$types.4), decreasing=T)
+
+df <- places %>%
+  select(types.0) %>%
+  table %>%
+  as_tibble %>% 
+  arrange(desc(n))
+
+df %$%
+  tibble(
+    name1 = `.`[1:18],
+    n1 = n[1:18],
+    name2 = `.`[19:36],
+    n2 = n[19:36],
+    name3 = `.`[37:54],
+    n3 = n[37:54],
+    name4 = c(`.`[55:70], "", ""),
+    n4 = c(n[55:70], "", "")
+    ) %>%
+  kable("html", align = c("l", "c"), col.names = rep(c("Name", "Freq"), 4)) %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), font_size = 9)
+
+rm(df)
+```
+
+
+## Big variety of types of places (2)
+
+There are `r length(unique(places$types.0))` different labels of places, and that is just for the `types.0` variable. On top of that there are other levels of `type` varables introducing man combinations.   
+
+Clearly that typology would have to simplified if some further use is planned. Many places refer to similar entities, for instance `bicycle_store` & `pet_store` could be both treated as SHOP category, whereas `bank` and `dentist` as SERVICES (?).
+
+There are also issues of data quality, for instance 'Hungry Jack's' is classfied sometimes as `restaurant` sometimes as `meal_takeaway`.
+
+Also the quality of `point_of_interest` and `food` classes is rather poor - mixing a lot of diverse types of places such as bars, parks, shops and services. 
+
+
+## Quality issues
+
+All the places with 'hotel' in the name, not that many are `types.0` 'hotels': 
+
+```{r hotels, echo=FALSE}
+
+hotels <- places %>% 
+  dplyr::filter(grepl("otel", name)) %>% 
+  dplyr::select(name, types.0, popular_any, popular_filled) %>% 
+  arrange(types.0)
+
+give.n <- function(x){
+  return(data.frame(y = median(x)*1.05, label = paste0("n = ",length(x))))
+  # experiment with the multiplier to find the perfect position
+}
+
+ggplot(hotels, aes(types.0, popular_filled)) + 
+  geom_boxplot() +
+  coord_flip() + 
+  stat_summary(fun.data = give.n, geom = "text", fun.y = median) 
+  
+```
+
+
+## Simplifying typology?
+
+```{r table_type_prep, include=FALSE}
+
+clean_types <- read_excel("//gpem-atlas2/QCPR/Projects/ABS Linkage/data/google_places/clean/clean_types.xlsx", 
+    sheet = "data")
+# View(clean_types)
+
+clean_types <-  dplyr::select(clean_types, place_id, type)
+
+places  <- inner_join(places, clean_types)
+sort(table(places$type), decreasing=TRUE)
+length(unique(places$type))
+
+```
+
+```{r table_type, echo=FALSE}
+
+df <- places %>%
+  select(type) %>%
+  table %>%
+  as_tibble %>% 
+  arrange(desc(n))
+
+df %$%
+  tibble(
+    name1 = `.`[1:10],
+    n1 = n[1:10],
+    name2 = `.`[11:20],
+    n2 = n[11:20],
+    name3 = c(`.`[21:27], "", "", ""),
+    n3 = c(n[21:27], "", "", "")
+    ) %>%
+  kable("html", align = c("l", "c"), col.names = rep(c("Name", "Freq"), 3)) %>%
+  kable_styling(bootstrap_options = c("striped", "condensed"), font_size = 9)
+
+rm(df)
+```
+
+## Completeness of 'popular times' 
+
+Places with popular times cluster in the center of Brisbane:
+
+```{r plot_popular_sa4, echo=FALSE}
+set_theme(geom.outline.color = NA)
+sjp.grpfrq(places$asgs.SA4_NAME16, places$popular_any,
+           show.na = FALSE)
+```
+
+## Missings in 'popular times' 
+
+```{r plot_missing, echo=FALSE}
+
+temp <- dplyr::select(places, scrape_data.0.popular_times.0:scrape_data.0.popular_times.167)
+colnames(temp) <- sub("scrape_data.0.popular_times\\.", "", colnames(temp))
+
+missmap(temp, rank.order = FALSE, main = "")
+rm(temp)
+
+```
+
+## Filled values distribution
+
+```{r plot_distr_filled, echo=FALSE}
+sjp.frq(places$popular_filled, 
+        type = "hist", 
+        geom.size = 1,
+        show.mean = TRUE)
+```
+
+Note: dashed line is for mean (and its CI)
+
+
+## Filled values across type of place
+
+```{r plot_lm_filled, echo=FALSE}
+fit <- lm(popular_filled ~ type, 
+          data = places)
+
+names(fit$coefficients) <- sub("type", "", names(fit$coefficients))
+
+set_theme(axis.textsize = .8)
+sjp.lm(fit, show.values = FALSE, show.p = FALSE, title = "")
+set_theme()
+```
+
+Note: naive linear regression of completness across categorical place type.
+
+
+## Filled values across space (1)
+
+```{r map_filled_1, echo=FALSE}
+
+ggmap_all + 
+  geom_point(data = places,  
+             aes(geometry.location.lng, geometry.location.lat, color = popular_filled), alpha = .9) +
+  scale_colour_gradient2(midpoint = 50, na.value="transparent", low = "firebrick", mid = "yellow", high = "forestgreen") +
+  theme(axis.line = element_blank(), axis.ticks = element_blank(), 
+        axis.title.x = element_blank(), axis.title.y = element_blank(), 
+        axis.text.x = element_blank(), axis.text.y = element_blank())
+
+
+# ggmap_cbd + 
+#   geom_point(data = filter(places, popular_filled > 0),  
+#              aes(geometry.location.lng, geometry.location.lat, color = popular_filled), alpha = .9) +
+#   scale_colour_gradient2(midpoint = 50, na.value="transparent", high = "firebrick", mid = "khaki", low = "forestgreen") +
+#   theme(axis.line = element_blank(), axis.ticks = element_blank(), 
+#         axis.title.x = element_blank(), axis.title.y = element_blank(), 
+#         axis.text.x = element_blank(), axis.text.y = element_blank())
+```
+
+
+## Filled values across space (2)
+
+```{r map_filled_2, echo=FALSE}
+mapview(sf_places, zcol = "popular_filled")
+```
+
+
+## Popularity across tod
+
+```{r pop_tod, echo=FALSE}
+ggplot(places_long, aes(tod, popularity)) + 
+  geom_boxplot(varwidth = TRUE) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + xlab("")
+```
+
+
+## Popularity across dow
+
+```{r pop_dow, echo=FALSE}
+ggplot(places_long, aes(dow, popularity)) + 
+  geom_boxplot(varwidth = TRUE) + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + xlab("")
+```
+
+
+## Popularity in CBD 
+
+```{r popularity_animations, eval=FALSE, include=FALSE}
+
+setwd("./R/animations/")
+
+# # anmating colors
+# saveHTML({
+#   for (i in 0:167) 
+#   {          
+#     myMap <- ggmap_cbd + 
+#       geom_point(data = filter(places_long, popular_filled > 0 & time == i),  
+#                  aes(geometry.location.lng, geometry.location.lat, color = popularity), 
+#                  alpha = .7, size = 4) +
+#       labs(fill="Popularity:") +
+#       geom_label(size = 7, x=153.007, y=-27.450, label = times[i+1]) +
+#       scale_colour_gradient2(midpoint = 50, na.value=NA, high = "firebrick", mid = "khaki", low = "royalblue", limits = c(0, 100)) +
+#       theme(axis.line = element_blank(), axis.ticks = element_blank(), 
+#             axis.title.x = element_blank(), axis.title.y = element_blank(), 
+#             axis.text.x = element_blank(), axis.text.y = element_blank())
+#     print(myMap)
+#   } 
+#   
+# }, img.name = "color_", imgdir = "frames", htmlfile = "animate_google_places_color.html", autobrowse = TRUE, 
+# title = "Google places - popularity animated by color", 
+# verbose =FALSE, interval = 0.5)
+# 
+# graphics.off()
+
+# animating size
+saveHTML({
+  for (i in 0:167) 
+  {          
+    myMap <- ggmap_cbd + 
+      geom_point(data = filter(places_long, time == i),  
+                 aes(geometry.location.lng, geometry.location.lat, size = popularity), 
+                 alpha = .4, shape = 21, fill = "firebrick4", color = "white") +
+      labs(size="Popularity:") +
+      scale_size_area(limits = c(0, 100)) +
+      geom_label(size = 7, x=153.010, y=-27.450, label = times[i+1]) +
+      theme(axis.line = element_blank(), axis.ticks = element_blank(), 
+            axis.title.x = element_blank(), axis.title.y = element_blank(), 
+            axis.text.x = element_blank(), axis.text.y = element_blank())
+    print(myMap)
+  } 
+  
+}, img.name = "size_", imgdir = "frames", htmlfile = "animate_google_places_size.html", autobrowse = TRUE, 
+title = "Google places - popularity animated by size", 
+verbose =FALSE, interval = 0.5)
+
+graphics.off()
+
+# # size again but saving to gif
+# saveGIF({
+#   for (i in 0:10) 
+#   {          
+#     myMap <- ggmap_cbd + 
+#       geom_point(data = filter(places_long, time == i),  
+#                  aes(geometry.location.lng, geometry.location.lat, size = popularity), 
+#                  alpha = .4, shape = 21, fill = "darkgreen", color = "white") +
+#       labs(size="Popularity:") +
+#       scale_size_area(limits = c(0, 100)) +
+#       geom_label(size = 7, x=153.007, y=-27.450, label = times[i+1]) +
+#       theme(axis.line = element_blank(), axis.ticks = element_blank(), 
+#             axis.title.x = element_blank(), axis.title.y = element_blank(), 
+#             axis.text.x = element_blank(), axis.text.y = element_blank())
+#     print(myMap)
+#   } 
+#   
+# }, movie.name = "animate_google_places_size.gif", verbose =FALSE, interval = 0.5)
+# 
+# graphics.off()
+
+rm(times)
+rm(myMap)
+setwd("./")
+```
+
+![](animations/frames/size_10.png) 
+
+See Animations for better impression...
+
+
+## Temporal signatures of places (1)
+
+```{r temp_graph_1, echo=FALSE}
+
+target <- c("restaurant", "cafe", "bar", "meal_takeaway")
+subset <- filter(places, type %in% target)  # equivalently, dat %>% filter(name %in% target)
+
+# spatial
+sf_subset <- st_as_sf(x = subset, 
+                        coords = c("geometry.location.lng", "geometry.location.lat"),
+                        crs = "+proj=longlat +datum=WGS84")
+sp_subset <- as(sf_subset, "Spatial")
+
+# mapview(sf_subset, legend = TRUE)
+
+subset_long <- subset %>% 
+  select(place_id, type) %>% 
+  inner_join(places_long) %>% 
+  mutate(time = ifelse(time >= 0 & time <= 23, time + 168, time)) %>% 
+  arrange(place_id, time)
+
+
+ggplot(subset_long, aes(x = time, y = popularity)) +   
+  geom_path(aes(group = place_id), alpha = 0.25) +
+  scale_x_continuous(breaks=c(24,48,72,96,120,144,168),
+                     labels =c("Mon", "Tue", "Wed", "Thu", "Fri", "Sat","Sun")) +
+  geom_smooth(method = "loess", span = 0.05, se = FALSE) + 
+  facet_wrap( ~ type, ncol = 1) +
+  theme_light() +
+  theme(axis.title.x=element_blank(),
+        strip.text.x = element_text(size = 12, colour = "black")) +
+  labs(y = "Popularity of place")
+
+ggsave("./R/graphs/google_places_popularity_food_drink.png", dpi = 300, width = 297, height = 210, units = c("mm"))
+
+rm(subset)
+rm(subset_long)
+
+```
+
+
+## Temporal signatures of places (2)
+
+```{r temp_graph_2, echo=FALSE}
+
+target <- c("gas_station", "BRIDGE", "parking", "train_station", "transit_station")
+subset <- filter(places, type %in% target)  # equivalently, dat %>% filter(name %in% target)
+
+# spatial
+sf_subset <- st_as_sf(x = subset, 
+                        coords = c("geometry.location.lng", "geometry.location.lat"),
+                        crs = "+proj=longlat +datum=WGS84")
+sp_subset <- as(sf_subset, "Spatial")
+
+# mapview(sf_subset, legend = TRUE)
+
+subset_long <- subset %>% 
+  select(place_id, type) %>% 
+  inner_join(places_long) %>% 
+  mutate(time = ifelse(time >= 0 & time <= 23, time + 168, time)) %>% 
+  arrange(place_id, time)
+
+
+ggplot(subset_long, aes(x = time, y = popularity)) +   
+  geom_path(aes(group = place_id), alpha = 0.25) +
+  scale_x_continuous(breaks=c(24,48,72,96,120,144,168),
+                     labels =c("Mon", "Tue", "Wed", "Thu", "Fri", "Sat","Sun")) +
+  geom_smooth(method = "loess", span = 0.05, se = FALSE) + 
+  facet_wrap( ~ type, ncol = 1) +
+  theme_light() +
+  theme(axis.title.x=element_blank(),
+        strip.text.x = element_text(size = 12, colour = "black")) +
+  labs(y = "Popularity of place")
+
+ggsave("./R/graphs/google_places_popularity_transport.png", dpi = 300, width = 297, height = 210, units = c("mm"))
+
+rm(subset)
+rm(subset_long)
+
+```
+
+
+## Temporal signatures of places (3)
+
+```{r temp_graph_3, echo=FALSE}
+
+target <- c("CULTURE", "liquor_store", "park", "SPORT", "movie_theater")
+subset <- filter(places, type %in% target)  # equivalently, dat %>% filter(name %in% target)
+
+# spatial
+sf_subset <- st_as_sf(x = subset, 
+                        coords = c("geometry.location.lng", "geometry.location.lat"),
+                        crs = "+proj=longlat +datum=WGS84")
+sp_subset <- as(sf_subset, "Spatial")
+
+# mapview(sf_subset, legend = TRUE)
+
+subset_long <- subset %>% 
+  select(place_id, type) %>% 
+  inner_join(places_long) %>% 
+  mutate(time = ifelse(time >= 0 & time <= 23, time + 168, time)) %>% 
+  arrange(place_id, time)
+
+
+ggplot(subset_long, aes(x = time, y = popularity)) +   
+  geom_path(aes(group = place_id), alpha = 0.25) +
+  scale_x_continuous(breaks=c(24,48,72,96,120,144,168),
+                     labels =c("Mon", "Tue", "Wed", "Thu", "Fri", "Sat","Sun")) +
+  geom_smooth(method = "loess", span = 0.05, se = FALSE) + 
+  facet_wrap( ~ type, ncol = 1) +
+  theme_light() +
+  theme(axis.title.x=element_blank(),
+        strip.text.x = element_text(size = 12, colour = "black")) +
+  labs(y = "Popularity of place")
+
+ggsave("./R/graphs/google_places_popularity_leisure.png", dpi = 300, width = 297, height = 210, units = c("mm"))
+
+rm(subset)
+rm(subset_long)
+
+```
+
+
+## Temporal signatures of places (4)
+
+```{r temp_graph_4, echo=FALSE}
+
+target <- c("shopping_mall", "SHOP", "SERVICES", "SPORT", "INT_CAFE")
+subset <- filter(places, type %in% target)  # equivalently, dat %>% filter(name %in% target)
+
+# spatial
+sf_subset <- st_as_sf(x = subset, 
+                        coords = c("geometry.location.lng", "geometry.location.lat"),
+                        crs = "+proj=longlat +datum=WGS84")
+sp_subset <- as(sf_subset, "Spatial")
+
+# mapview(sf_subset, legend = TRUE)
+
+subset_long <- subset %>% 
+  select(place_id, type) %>% 
+  inner_join(places_long) %>% 
+  mutate(time = ifelse(time >= 0 & time <= 23, time + 168, time)) %>% 
+  arrange(place_id, time)
+
+
+ggplot(subset_long, aes(x = time, y = popularity)) +   
+  geom_path(aes(group = place_id), alpha = 0.25) +
+  scale_x_continuous(breaks=c(24,48,72,96,120,144,168),
+                     labels =c("Mon", "Tue", "Wed", "Thu", "Fri", "Sat","Sun")) +
+  geom_smooth(method = "loess", span = 0.05, se = FALSE) + 
+  facet_wrap( ~ type, ncol = 1) +
+  theme_light() +
+  theme(axis.title.x=element_blank(),
+        strip.text.x = element_text(size = 12, colour = "black")) +
+  labs(y = "Popularity of place")
+
+ggsave("./R/graphs/google_places_popularity_shop.png", dpi = 300, width = 297, height = 210, units = c("mm"))
+
+rm(subset)
+rm(subset_long)
+
+```
+
+
+## Temporal signatures of places (5)
+
+```{r temp_graph_5, echo=FALSE}
+
+target <- c("AIRPORT", "atm", "INT_CAFE", "night_club")
+subset <- filter(places, type %in% target)  # equivalently, dat %>% filter(name %in% target)
+
+# spatial
+sf_subset <- st_as_sf(x = subset, 
+                        coords = c("geometry.location.lng", "geometry.location.lat"),
+                        crs = "+proj=longlat +datum=WGS84")
+sp_subset <- as(sf_subset, "Spatial")
+
+# mapview(sf_subset, legend = TRUE)
+
+subset_long <- subset %>% 
+  select(place_id, type) %>% 
+  inner_join(places_long) %>% 
+  mutate(time = ifelse(time >= 0 & time <= 23, time + 168, time)) %>% 
+  arrange(place_id, time)
+
+
+ggplot(subset_long, aes(x = time, y = popularity)) +   
+  geom_path(aes(group = place_id), alpha = 0.25) +
+  scale_x_continuous(breaks=c(24,48,72,96,120,144,168),
+                     labels =c("Mon", "Tue", "Wed", "Thu", "Fri", "Sat","Sun")) +
+  geom_smooth(method = "loess", span = 0.05, se = FALSE) + 
+  facet_wrap( ~ type, ncol = 1) +
+  theme_light() +
+  theme(axis.title.x=element_blank(),
+        strip.text.x = element_text(size = 12, colour = "black")) +
+  labs(y = "Popularity of place")
+
+ggsave("./R/graphs/google_places_popularity_other.png", dpi = 300, width = 297, height = 210, units = c("mm"))
+
+rm(subset)
+rm(subset_long)
+
+```
+
+## TODO
+
+- Duplicate coordinates?
+- ~~Cleaning of the `type` variable~~
+- Integrate info about reviews?
+- Seasonality?
+- Clustering?
+    - temporal trajectories?
+    - spatial?
+- 3D viz? analysis? 

@@ -1,0 +1,159 @@
+# Traffic volume at intersection
+
+## Locations
+
+Only three locations seems to be useful for the campus.
+
+One is from the busway so it might not be of much use.
+
+One might be too far from campus.
+
+```{r}
+intersect <- jsonlite::fromJSON(here::here("data", "BCC", "traffic", "raw", "locations",
+                                           "Intersection_locations_reference.json"), 
+                                flatten = TRUE) %>% 
+  select(tsc, coordinates.latLng.latitude, coordinates.latLng.longitude,
+         region, suburb) %>% 
+  filter(!is.na(coordinates.latLng.longitude) & !is.na(coordinates.latLng.latitude)) %>%
+  filter(tsc %in% c(8074, 878, 90)) %>%
+  st_as_sf(., coords = c("coordinates.latLng.longitude", "coordinates.latLng.latitude"), 
+           crs = 4326, agr = "constant")
+
+qtm(intersect)
+
+```
+
+## Data
+
+```{r eval=FALSE, warning=FALSE, include=FALSE}
+bcc_traffic_8074 <- 
+  read_table2("data/BCC/traffic_official/raw/B8074 15 Min Volumes November 2018.txt", 
+              col_names = c("time", paste0("v", 1:19)),
+              skip = 0) %>% 
+  rename(d1 = v3, d2 = v4, d3 = v5, 
+         d4 = v6, d5 = v7, d6 = v8, 
+         d7 = v9, d8 = v10, d9 = v11) %>% 
+  mutate(date = ifelse(test = v2 == "November", yes = paste0("2018-11-", v1), no = NA)) %>% 
+  select(-v1, -v2, -v12, -v13, - v14, - v15, -v16, -v17, -v18, -v19) %>% 
+  fill(date) %>% 
+  filter(time != "Approach") %>% 
+  filter(grepl(":",time)) %>% 
+  mutate(recorded_15 = anytime(paste0(date, " ", time, ":00"), tz = "Australia/Brisbane") - 15*60) %>% 
+  select(recorded_15, everything(), - date, -time) %>% 
+  mutate(d1 = as.integer(d1),  d2 = as.integer(d2), d3 = as.integer(d3),
+         d4 = as.integer(d4), d5 = as.integer(d5), d6 = as.integer(d6),
+         d7 = as.integer(d7), d8 = as.integer(d8), d9 = as.integer(d9)) 
+
+saveRDS(bcc_traffic_8074, "data/BCC/traffic_official/clean/bcc_traffic_8074.Rds")
+
+```
+
+
+```{r}
+bcc_traffic_8074 <- readRDS("data/BCC/traffic_official/clean/bcc_traffic_8074.Rds")
+
+# # 15 min / 1h intervals as posix
+# bcc_traffic_8074$recorded_60 <- ymd_hms(cut(bcc_traffic_8074$recorded,
+#                                             breaks = seq(ymd_hms("2018-09-10 00:00:00", 
+#                                                                  tz = "Australia/Brisbane"), 
+#                                                          ymd_hms("2019-01-28 00:00:00", 
+#                                                                  tz = "Australia/Brisbane"), 
+#                                                          as.difftime(1, units = "hours")),
+#                                             include.lowest = TRUE), tz = "Australia/Brisbane")
+
+# intervals as character
+# bcc_traffic_8074$time_cat_str <- substr(as.character(bcc_traffic_8074$recorded_cat), 12, 16)
+```
+
+BCC data on traffic counts aggregated to 15 min buckets. `r nrow(bcc_traffic_8074)` datapoints for the `8074` intersection are available from `r min(bcc_traffic_8074$recorded_15)` to `r max(bcc_traffic_8074$recorded_15)`. Available variable refers to overall 'minimum volumes' and is recorded by 9 detectors. 
+
+```{r}
+bcc_traffic_8074 %>% 
+  slice(29:33)
+```
+
+## Results
+
+15 minute aggregates, example of all detectors for one day
+
+```{r}
+bcc_traffic_8074_long <- bcc_traffic_8074 %>% 
+  gather(code, mf, d1:d9) %>% 
+  filter(!code %in% c("d7", "d8", "d9")) %>% 
+  mutate(direction = case_when(
+    code == "d1" ~ "inbound",
+    code == "d2" ~ "inbound",
+    code == "d3" ~ "outbound",
+    code == "d4" ~ "outbound",
+    code == "d5" ~ "inbound",
+    code == "d6" ~ "inbound"
+  ))
+
+bcc_traffic_8074_long %>% 
+  filter(recorded_15 >= ymd_hms("2018-11-27 00:00:00", tz = "Australia/Brisbane") & 
+           recorded_15 <= ymd_hms("2018-11-27 23:59:59", tz = "Australia/Brisbane")) %>% 
+  ggplot(aes(x = recorded_15, y = mf, colour = code)) + 
+  geom_line() + 
+  scale_x_datetime() + theme_minimal() + 
+  xlab("") + ylab("Traffic volume") +
+  facet_wrap(~direction, ncol = 1)
+```
+
+Ignoring lines, one week
+
+```{r}
+bcc_traffic_agg_8074_long <- bcc_traffic_8074_long %>% 
+  group_by(recorded_15, direction) %>% 
+  summarise(mf = sum(mf, na.rm = TRUE)) %>% 
+  ungroup()
+
+bcc_traffic_agg_8074_long %>% 
+  filter(recorded_15 >= ymd_hms("2018-11-26 04:00:00", tz = "Australia/Brisbane") & 
+           recorded_15 <= ymd_hms("2018-12-02 23:59:59", tz = "Australia/Brisbane")) %>% 
+  ggplot(aes(x = recorded_15, y = mf)) + 
+  geom_col() +
+  scale_x_datetime() + theme_minimal() + 
+  xlab("") + ylab("Traffic volume") +
+  facet_wrap(~direction, ncol = 1)
+```
+
+Inbound traffic, whole study period
+
+```{r}
+p <- bcc_traffic_agg_8074_long %>% 
+  filter(direction == "inbound") %>%
+  rename(date_time = recorded_15) %>% 
+  mutate(weekday = strftime(date_time, format = "%A", tz = "Australia/Brisbane"),
+         weekend = if_else(weekday %in% c("Saturday", "Sunday"), "Weekend", "Weekday"),
+         date = as.Date(date_time, tz = "Australia/Brisbane"),
+         time = as.numeric(format(date_time, "%H")) + as.numeric(format(date_time, "%M"))/60) %>%
+  frame_calendar(x = time, y = mf, date = date) %>% 
+  ggplot(aes(x = .time, y = .mf, group = date, colour = weekend)) +
+  geom_line() +
+  theme(legend.position = "none") + 
+  theme_minimal()
+
+prettify(p)
+```
+
+## Limitations
+
+- Little is known how counts are calculated
+
+- There are four days in Nov with missing data. Days around might be affected too with partial data?
+
+```{r}
+bcc_traffic_8074_long %>% 
+  filter(recorded_15 >= ymd_hms("2018-11-20 00:00:00", tz = "Australia/Brisbane") & 
+           recorded_15 <= ymd_hms("2018-11-27 23:59:59", tz = "Australia/Brisbane")) %>% 
+  mutate(date = as.Date(recorded_15)) %>% 
+  group_by(date) %>% 
+  summarise(mf = sum(mf, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  ggplot(aes(x = date, y = mf)) + 
+  geom_col() + 
+  scale_x_date() + theme_minimal() + 
+  xlab("") + ylab("Traffic volume") 
+```
+
+

@@ -1,0 +1,720 @@
+---
+title: "POP247 - data catalogue"
+subtitle: "Pilot for St Lucia campus Aug 2016"
+author: "Radoslaw Panczak"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+mainfont: DejaVu Sans
+output: 
+  html_document: 
+    # css: custom.css
+    toc: true
+    toc_depth: 4
+    toc_float: true
+    number_sections: true
+    theme: united 
+    highlight: pygments 
+---
+
+<!-- ------------------------------------------------------------ --> 
+<!-- ------------------------------------------------------------ --> 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = TRUE, fig.width=8, fig.height=6, dpi=300, out.width="800px", out.height="600px")
+
+# knitr::opts_knit$set(root.dir = 'R:/POP247-Q0786/')
+# setwd('R:/POP247-Q0786/')
+
+set.seed(12345)
+
+library(pacman) 
+p_load(tidyverse, fs, here, readxl, magrittr, anytime, lubridate,
+       naniar, janitor, kableExtra, sjmisc, scales,
+       sf, readabs, tmap, tmaptools)
+
+tmap_mode("view") # makes map interactive
+
+```
+
+# Time 
+
+August 2016 has been chosen to coincide with campus survey. 12th to 22nd August is the period with largest amount of data, limited by car counters.
+
+# Location
+
+```{r, include=FALSE}
+campus_sf <- st_read(here::here("data", "geo", "MB_2016_QLD_campus.shp"), quiet = TRUE)
+# campus_sf <- st_transform(campus_sf, 4326) # orig crs: 4283 
+
+# campus_sp <- readOGR(here::here("data", "geo", "MB_2016_QLD_campus.shp"))
+# campus_sp <- spTransform(campus_sp, CRS("+init=epsg:4326"))
+```
+
+Pilot will be constrained to mesh block `r as.character(campus_sf$MB_CODE16)` (same as SA1 `r as.character(campus_sf$SA1_MAIN16)`)
+
+```{r}
+tm_shape(campus_sf) +
+  tm_polygons(col = "purple", alpha = 0.5, lwd = 0)
+```
+
+Some stats might be only available on SA2 level (`r as.character(campus_sf$SA2_MAIN16)` area `r as.character(campus_sf$SA2_NAME16)`)? But that will be problematic since it includes non-campus part of St Lucia.
+
+
+# Census
+
+## Resident pop (ERP)
+
+Estimated at **2,153** people for SA1 (place of usual residence)
+
+## Working pop
+
+Destination Zones (DZN) geography code: 310961711 (equivalent to SA1?).
+
+Estimated population **8,695** (place of work).
+
+These can be disaggregated by place of origin (DZN or SA2 and above)
+
+Both resident and working pops can come split by characteristics covered in the census. 
+
+## Nightime pop
+
+From the Aug UQ survey: 
+
+> Collating information from the websites of each of the 10 residential colleges and Unilodge yielded a resident population of **2,747** for the St Lucia Campus as of August 2016. It is assumed that the resident population represents the overnight population of the campus.
+
+# Public transport
+
+Data comes from `UQ Saint Lucia Boardings & Alightings 12th - 29th August 2016` spreadsheet. With following metadata on it:
+
+Author: Pearl Gariano
+Created: 2nd September 2016
+
+Assumptions & Limitations:
+
+1. Data is extracted from NetBI
+2. Data reports on Stop Utilisation
+3. Boardings include GoCard, Paper ticket sale and Count data.
+4. Alightings include GoCard data only.
+5. Data reports on stops 
+- UQ St Lucia ferry terminal [319665]
+- UQ Lakes - Zone A [1853]
+- UQ Lakes - Zone B [1877]
+- UQ Lakes - Zone C [1878]
+- UQ Lakes - Zone D [1880]
+- UQ Lakes - arrival. [1882]
+- University of Queensland - Zone A [1801] 
+- University of Queensland - Zone B [1799]
+- University of Queensland - Zone C [1798] 
+- University of Queensland - Zone D [1797]
+- University of Queensland - Zone E [1802]
+6. Data reports on week 12th-29rd August 2016
+
+
+## Locations
+
+```{r, eval=FALSE}
+# //gpem-flowm/Projects/GoCard/Data/GoCard/SEQ_GTFS_161121/stops.txt
+stops <- read_csv("data/goCard/raw/stops.txt", 
+                  col_types = cols(
+                    stop_id = col_character()
+                  )) %>% 
+  st_as_sf(coords = c("stop_lon", "stop_lat"), crs = 4326) %>% 
+  st_transform(4283) 
+
+# campus_stops <- st_intersection(stops, select(st_buffer(campus_sf, 0.005), geometry))
+
+campus_stops <- st_intersection(stops, select(campus_sf, geometry)) %>% 
+  # filter(stop_name != "place_INTUQ" & stop_id != "place_UQLAKE") %>% 
+  filter(!str_detect(stop_name, fixed("Coldridge St")))
+
+temp <- stops %>% 
+  filter(stop_name == "UQ St Lucia ferry terminal") %>% 
+  st_as_sf(coords = c("stop_lon", "stop_lat"), crs = 4326) %>% 
+  st_transform(4283) 
+
+campus_stops <- do.call(rbind, list(campus_stops, temp)) %>% 
+  filter(! stop_id %in% c("place_INTUQ", "place_UQLAKE"))
+
+rm(temp)
+
+saveRDS(campus_stops, "data/goCard/clean/campus_stops.Rds")
+
+```
+
+Two 'clusters' of bus stops and ferry terminal:
+
+```{r}
+campus_stops <- readRDS("data/goCard/clean/campus_stops.Rds")
+qtm(campus_stops)
+```
+
+## Data
+
+```{r, eval=FALSE}
+# "//gpem-atlas2/QCPR/Projects/UQPFD - Campus Population Estimates/2016/Analysis_Lauren/Final/Bus_CityCat_Data for the week.xlsx
+public_transport <- read_excel("data/buses/raw/Bus_CityCat_Data for the week.xlsx", 
+                               sheet = "Stop Utilisation", 
+                               col_types = c("text", "text", 
+                                             "numeric", "numeric", "numeric", 
+                                             "numeric", "numeric", "numeric", 
+                                             "numeric", "numeric", "numeric", 
+                                             "numeric", "numeric", "numeric", 
+                                             "numeric", "numeric", "numeric", 
+                                             "numeric", "numeric", "numeric", 
+                                             "numeric", "numeric", "numeric", 
+                                             "numeric", "numeric", "numeric"), 
+                               skip = 15) %>% 
+  clean_names() %>% 
+  dplyr::rename(lakes_za_boarding = boardings_3, lakes_za_alighting = alightings_4,
+                lakes_zb_boarding = boardings_5, lakes_zb_alighting = alightings_6,
+                lakes_zc_boarding = boardings_7, lakes_zc_alighting = alightings_8,
+                lakes_zd_boarding = boardings_9, lakes_zd_alighting = alightings_10,
+                lakes_ze_boarding = boardings_11, lakes_ze_alighting = alightings_12,
+                lakes_ar_boarding = boardings_13, lakes_ar_alighting = alightings_14,
+                ferry_boarding = boardings_15, ferry_alighting = alightings_16,
+                uq_za_boarding = boardings_17, uq_za_alighting = alightings_18,
+                uq_zb_boarding = boardings_19, uq_zb_alighting = alightings_20,
+                uq_zc_boarding = boardings_21, uq_zc_alighting = alightings_22,
+                uq_zd_boarding = boardings_23, uq_zd_alighting = alightings_24,
+                uq_ze_boarding = boardings_25, uq_ze_alighting = alightings_26,
+                date = x1, time = x2) %>% 
+  fill(date) %>% 
+  replace(is.na(.), 0) %>%
+  dplyr::filter(date != "Total") %>% 
+  tidyr::separate(time, c("time_from", "time_to"), sep = " - ") %>% 
+  mutate(date = dmy(date)) %>% 
+  mutate(time_from = lubridate::ymd_hm(paste(date, time_from), tz = "Australia/Brisbane"), 
+         time_to = lubridate::ymd_hm(paste(date, time_to), tz = "Australia/Brisbane")) %>% 
+  select(-date, -time_to) %>% # simplifying to match other data
+  rename(date = time_from)
+
+saveRDS(public_transport, "data/buses/clean/public_transport.Rds")
+
+```
+
+
+```{r}
+public_transport <- readRDS("data/buses/clean/public_transport.Rds") %>% 
+  mutate(lakes_boarding = lakes_za_boarding + lakes_zb_boarding + lakes_zc_boarding + lakes_zd_boarding + lakes_ze_boarding + lakes_ar_boarding,
+         lakes_alighting = lakes_za_alighting + lakes_zb_alighting + lakes_zc_alighting + lakes_zd_alighting + lakes_ze_alighting + lakes_ar_alighting,
+         uq_boarding = uq_za_boarding + uq_zb_boarding + uq_zc_boarding + uq_zd_boarding + uq_ze_boarding ,
+         uq_alighting = uq_za_alighting + uq_zb_alighting + uq_zc_alighting + uq_zd_alighting + uq_ze_alighting) %>% 
+  select(-starts_with("lakes_z"), -starts_with("uq_z"), -lakes_ar_boarding, -lakes_ar_alighting) %>% 
+  gather(key, count, ferry_boarding:uq_alighting) %>% 
+  separate(key, c("site", "direction"), sep = "_") %>% 
+  mutate(type = "public_transport") %>% 
+  select(date, type, site, direction, count) %>% 
+  mutate(direction = ifelse(test = direction == "alighting", yes = "inbound", no = "outbound")) %>% 
+  filter(date >= lubridate::ymd_hms("2016-08-12 00:00:00", tz = "Australia/Brisbane") & 
+           date <= lubridate::ymd_hms("2016-08-22 23:59:59", tz = "Australia/Brisbane"))
+```
+
+'Lakes' and 'UQ' stops clusters were merged. `r nrow(public_transport)` public transport aggregated counts for three aggregated stop, separating boardings and alightings. 
+
+```{r}
+slice(public_transport, 1:5)
+```
+
+Example data for `2016-08-16` from 4AM onwards:
+
+```{r, warning=FALSE}
+public_transport %>% 
+  filter(date >= lubridate::ymd_hm("2016-08-16 04:00", tz = "Australia/Brisbane") & 
+           date <= lubridate::ymd_hm("2016-08-16 23:59", tz = "Australia/Brisbane")) %>%
+  ggplot(aes(date, count, color = direction, linetype = site)) +
+  geom_line() + 
+  theme_minimal() + xlab("") + ylab("Counts") + 
+  ggtitle("Public transport passangers on St Lucia campus")
+```
+
+## Limitations
+
+No split between staff and student (as in goCard).
+
+
+# Cyclists & pedestrians
+
+## Locations
+
+Automatic & manual counts are available for locations 1 (bikes) and 9 (pedestrians & bikes):
+
+![](UQ_map_Observation_Points.jpg)
+
+## Data - Green Bridge
+
+```{r}
+# \\gpem-atlas2\QCPR\Projects\UQPFD - Campus Population Estimates\2016\Analysis_Lauren\GreenBridge.xlsx
+
+green_bridge <- read_excel("data/counters/raw/GreenBridge.xlsx", 
+                           col_types = c("date", "numeric", "numeric", 
+                                         "numeric", "numeric", "numeric", "numeric")) %>% 
+  clean_names() %>%
+  remove_empty(c("rows", "cols")) %>% 
+  select(-eleanor_schonell_bridge_cyclists, -eleanor_schonell_bridge_pedestrians) %>% 
+  rename(cyclists_inbound = eleanor_schonell_bridge_cyclists_inbound,
+         cyclists_outbound = eleanor_schonell_bridge_cyclists_outbound,
+         pedestrians_inbound = eleanor_schonell_bridge_pedestrians_inbound,
+         pedestrians_outbound = eleanor_schonell_bridge_pedestrians_outbound) %>% 
+  filter(!is.na(cyclists_inbound)) %>% 
+  force_tz(date, tzone = "Australia/Brisbane") %>% 
+  # filter(date >= ymd_hms("2016-08-13 00:00:00")) %>% 
+  # filter(date <= ymd_hms("2016-08-19 23:59:59")) %>% 
+  gather(cyclists_inbound:pedestrians_outbound, key = "measure", value = "count") %>% 
+  separate(measure, c("type", "direction")) %>% 
+  mutate(site = "green_bridge") %>% 
+  select(date, type, site, direction, count)%>% 
+  filter(date >= lubridate::ymd_hm("2016-08-12 00:00", tz = "Australia/Brisbane") & 
+           date <= lubridate::ymd_hm("2016-08-22 23:59", tz = "Australia/Brisbane"))
+
+saveRDS(green_bridge, "data/counters/clean/green_bridge.Rds")
+```
+
+15 minutes interval directional infrared counters for bikes and pedestrians (separately) from `r min(public_transport$date)` to `r max(public_transport$date)`. 
+
+```{r}
+slice(green_bridge, 1:5)
+```
+
+## Results - Green Bridge
+
+Example counts for `2016-08-16` across type and direction.
+
+```{r}
+green_bridge %>% 
+  filter(date >= ymd_hms("2016-08-16 04:00:00", tz = "Australia/Brisbane")) %>% 
+  filter(date <= ymd_hms("2016-08-16 23:59:59", tz = "Australia/Brisbane")) %>% 
+  ggplot(aes(x = date, y = count)) + 
+  geom_line(aes(group = interaction(type, direction), color = direction, linetype = type)) + 
+  scale_x_datetime() + theme_minimal() + 
+  xlab("") + ylab("Bike / pedestrian counts")
+
+```
+
+## Data - Macquarie Drive
+
+```{r}
+macquarie_bikes <- read_excel("data/counters/raw/V1399 QLD Uni/2016 Brisbane Bike Track.xls", 
+                              sheet = "Class EB 15", skip = 6,
+                              col_types = c("text", "text", "text", "numeric")) %>% 
+  clean_names() %>%
+  remove_empty(c("rows", "cols")) %>% 
+  filter(!is.na(time)) %>% 
+  rename(count = class_1) %>% 
+  mutate(date = parse_date_time(paste(date, time), "%d/%m/%y %I:%M %p", tz = "Australia/Brisbane")) %>% 
+  select(-day, -time) %>% 
+  filter(date >= ymd_hms("2016-08-12 00:00:00", tz = "Australia/Brisbane")) %>%
+  filter(date <= ymd_hms("2016-08-22 23:59:59", tz = "Australia/Brisbane")) %>%
+  mutate(type = "cyclists", direction = "inbound") # eastbound
+
+temp <- read_excel("data/counters/raw/V1399 QLD Uni/2016 Brisbane Bike Track.xls", 
+                   sheet = "Class WB 15", skip = 6,
+                   col_types = c("text", "text", "text", "numeric")) %>% 
+  clean_names() %>%
+  remove_empty(c("rows", "cols")) %>% 
+  filter(!is.na(time)) %>% 
+  rename(count = x1) %>% 
+  mutate(date = parse_date_time(paste(date, time), "%d/%m/%y %I:%M %p", tz = "Australia/Brisbane")) %>% 
+  select(-day, -time) %>% 
+  filter(date >= ymd_hms("2016-08-12 00:00:00", tz = "Australia/Brisbane")) %>%
+  filter(date <= ymd_hms("2016-08-22 23:59:59", tz = "Australia/Brisbane")) %>%
+  mutate(type = "cyclists", direction = "outbound") # westbound
+
+macquarie_bikes <- bind_rows(macquarie_bikes, temp) %>% 
+  mutate(site = "Macquarie") %>% 
+  select(date, type, site, direction, count)
+
+rm(temp)
+
+saveRDS(macquarie_bikes, "data/counters/clean/macquarie_bikes.Rds")
+```
+
+`r nrow(macquarie_bikes)` records of pneumatic bike counts for 'Brisbane River Bike Path near Rowing Club E/W' station in 15 or 5 minutes intervals from `r min(macquarie_bikes$date)` to `r max(macquarie_bikes$date)`.
+
+```{r}
+slice(macquarie_bikes, 1:5)
+```
+
+## Results - Macquarie Drive
+
+Example counts for `2016-08-16` across type and direction from 4AM onwards.
+
+```{r}
+macquarie_bikes %>% 
+  filter(date >= ymd_hms("2016-08-16 04:00:00", tz = "Australia/Brisbane")) %>% 
+  filter(date <= ymd_hms("2016-08-16 23:59:59", tz = "Australia/Brisbane")) %>% 
+  ggplot(aes(x = date, y = count)) + 
+  geom_line(aes(group = interaction(type, direction), color = direction, linetype = type)) + 
+  scale_x_datetime() + theme_minimal() + 
+  xlab("") + ylab("Bike / pedestrian counts")
+
+```
+
+
+# Pneumatic car counts
+
+## Data - Chancellors, Schonell, McGregor
+
+```{r, include=FALSE}
+ch1 <- read_excel("data/counters/raw/V1399 QLD Uni/2016 Chancellors Place.xls", 
+                  sheet = "Class NB 15", skip = 6) %>% 
+  clean_names() %>%
+  remove_empty(c("rows", "cols")) %>% 
+  filter(!is.na(time)) %>% 
+  rename(count = total) %>% 
+  mutate(date = parse_date_time(paste(date, time), "%d/%m/%y %I:%M %p", tz = "Australia/Brisbane")) %>%   select(date, count) %>% 
+  filter(date >= ymd_hms("2016-08-12 00:00:00", tz = "Australia/Brisbane")) %>%
+  filter(date <= ymd_hms("2016-08-22 23:59:59", tz = "Australia/Brisbane")) %>%
+  mutate(type = "vehicles", direction = "inbound", site = "Chancellors")
+
+ch2 <- read_excel("data/counters/raw/V1399 QLD Uni/2016 Chancellors Place.xls", 
+                  sheet = "Class SB 15", skip = 6) %>% 
+  clean_names() %>%
+  remove_empty(c("rows", "cols")) %>% 
+  filter(!is.na(time)) %>% 
+  rename(count = total) %>% 
+  mutate(date = parse_date_time(paste(date, time), "%d/%m/%y %I:%M %p", tz = "Australia/Brisbane")) %>%
+  select(date, count) %>% 
+  filter(date >= ymd_hms("2016-08-12 00:00:00", tz = "Australia/Brisbane")) %>%
+  filter(date <= ymd_hms("2016-08-22 23:59:59", tz = "Australia/Brisbane")) %>%
+  mutate(type = "vehicles", direction = "outbound", site = "Chancellors")
+
+sc1 <- read_excel("data/counters/raw/V1399 QLD Uni/2016 Sir Fred Schonell Drive.xls", 
+                  sheet = "Class EB 15", skip = 6) %>% 
+  clean_names() %>%
+  remove_empty(c("rows", "cols")) %>% 
+  filter(!is.na(time)) %>% 
+  rename(count = total) %>% 
+  mutate(date = parse_date_time(paste(date, time), "%d/%m/%y %I:%M %p", tz = "Australia/Brisbane")) %>%
+  select(date, count) %>% 
+  filter(date >= ymd_hms("2016-08-12 00:00:00", tz = "Australia/Brisbane")) %>%
+  filter(date <= ymd_hms("2016-08-22 23:59:59", tz = "Australia/Brisbane")) %>%
+  mutate(type = "vehicles", direction = "inbound", site = "Schonell")
+
+sc2 <- read_excel("data/counters/raw/V1399 QLD Uni/2016 Sir Fred Schonell Drive.xls", 
+                  sheet = "Class WB 15", skip = 6) %>% 
+  clean_names() %>%
+  remove_empty(c("rows", "cols")) %>% 
+  filter(!is.na(time)) %>% 
+  rename(count = total) %>% 
+  mutate(date = parse_date_time(paste(date, time), "%d/%m/%y %I:%M %p", tz = "Australia/Brisbane")) %>%
+  select(date, count) %>% 
+  filter(date >= ymd_hms("2016-08-12 00:00:00", tz = "Australia/Brisbane")) %>%
+  filter(date <= ymd_hms("2016-08-22 23:59:59", tz = "Australia/Brisbane")) %>%
+  mutate(type = "vehicles", direction = "outbound", site = "Schonell")
+
+mc1 <- read_excel("data/counters/raw/V1399 QLD Uni/2016 Sir William McGregor Drive.xls", 
+                  sheet = "Class NB 15", skip = 6) %>% 
+  clean_names() %>%
+  remove_empty(c("rows", "cols")) %>% 
+  filter(!is.na(time)) %>% 
+  rename(count = total) %>% 
+  mutate(date = parse_date_time(paste(date, time), "%d/%m/%y %I:%M %p", tz = "Australia/Brisbane")) %>%
+  select(date, count) %>% 
+  filter(date >= ymd_hms("2016-08-12 00:00:00", tz = "Australia/Brisbane")) %>%
+  filter(date <= ymd_hms("2016-08-22 23:59:59", tz = "Australia/Brisbane")) %>%
+  mutate(type = "vehicles", direction = "outbound", site = "McGregor")
+
+mc2 <- read_excel("data/counters/raw/V1399 QLD Uni/2016 Sir William McGregor Drive.xls", 
+                  sheet = "Class SB 15", skip = 6) %>% 
+  clean_names() %>%
+  remove_empty(c("rows", "cols")) %>% 
+  filter(!is.na(time)) %>% 
+  rename(count = total) %>% 
+  mutate(date = parse_date_time(paste(date, time), "%d/%m/%y %I:%M %p", tz = "Australia/Brisbane")) %>%
+  select(date, count) %>% 
+  filter(date >= ymd_hms("2016-08-12 00:00:00", tz = "Australia/Brisbane")) %>%
+  filter(date <= ymd_hms("2016-08-22 23:59:59", tz = "Australia/Brisbane")) %>%
+  mutate(type = "vehicles", direction = "inbound", site = "McGregor")
+
+vehicles <- bind_rows(ch1, ch2, sc1, sc2, mc1, mc2) %>% 
+  select(date, type, site, direction, count)
+
+rm(ch1, ch2, sc1, sc2, mc1, mc2)
+gc() 
+
+saveRDS(vehicles, "data/counters/clean/vehicles.Rds")
+```
+
+Pneumatic vehicle counts for 
+
+- Chancellors Place N/S 
+- Sir Fred Schonell Drive W/E
+- Sir William McGregor Drive N/S
+
+sites in 15 minutes intervals. `r nrow(vehicles)` records from `r min(vehicles$date)` to `r max(vehicles$date)`.
+
+```{r}
+slice(vehicles, 1:5)
+```
+
+
+## Average vehicle occupancy
+
+### Weekday
+
+Few data points exist for observarions of car occupancy for weekday from the 2015 Survey (Tue 18th Aug).
+
+`loess.smooth` is fitted using data points plus mean values added at the begining and end of the day.
+
+```{r warning=FALSE}
+# Field Count data 2016_Weekday.xlsx
+occupancy_week <- read_excel("data/counters/raw/Field Count data 2016_Weekday.xlsx", 
+                             sheet = "Occupancy", range = "A4:I99", 
+                             col_types = c("date", "numeric", "numeric", 
+                                           "numeric", "numeric", "numeric", 
+                                           "numeric", "numeric", "numeric")) %>% 
+  clean_names() %>% 
+  rename(timestamp = x0, 
+         in1 = x2, in2 = x3, in3 = x4, in4 = x5,
+         out1 = x6, out2 = x7, out3 = x8, out4 = x9) %>% 
+  mutate(time = strftime(timestamp, format = "%H:%M", tz = "UTC")) %>% 
+  mutate(in_avg = (in1*1 + in2*2 + in3*3 + in4*4) / (in1 + in2 + in3 + in4)) %>% 
+  mutate(out_avg = (out1*1 + out2*2 + out3*3 + out4*4) / (out1 + out2 + out3 + out4)) %>% 
+  dplyr::select(timestamp, time, in_avg, out_avg)
+
+
+date(occupancy_week$timestamp) <- "2015-08-18"
+
+occupancy_week$in_avg[1] <- mean(occupancy_week$in_avg, na.rm = TRUE)
+occupancy_week$in_avg[nrow(occupancy_week)] <- mean(occupancy_week$in_avg, na.rm = TRUE)
+
+occupancy_week$out_avg[1] <- mean(occupancy_week$out_avg, na.rm = TRUE)
+occupancy_week$out_avg[nrow(occupancy_week)] <- mean(occupancy_week$out_avg, na.rm = TRUE)
+
+# ggplot(occupancy_week, aes(timestamp, in_avg)) + 
+#   geom_point() + scale_x_datetime() + geom_smooth(fullrange=TRUE)
+
+# plot(x = occupancy_week$timestamp, y = occupancy_week$in_avg, ylim=c(1, 2))
+# # lines(spline(x = occupancy_week$timestamp, y = occupancy_week$in_avg, 
+# #              n = 4*nrow(occupancy_week)), col = 2)
+# lines(spline(x = occupancy_week$timestamp, y = occupancy_week$in_avg, 
+#              n = 4*nrow(occupancy_week), method = "natural"), col = 3)
+# lines(spline(x = occupancy_week$timestamp, y = occupancy_week$in_avg, 
+#              n = 4*nrow(occupancy_week), method = "periodic"), col = 4)
+# # legend("topleft", c("fmm", "natural", "periodic"), col = 2:4, lty = 1)
+# legend("topleft", c("natural", "periodic"), col = 2:4, lty = 1)
+
+
+# http://dwoll.de/rexrepos/posts/diagSplines.html
+occupancy_week$in_loess <- loess.smooth(x = occupancy_week$timestamp, y = occupancy_week$in_avg, 
+                                        span = 2/3, degree = 1, evaluation = nrow(occupancy_week))$y
+plot(x = occupancy_week$timestamp, y = occupancy_week$in_avg, ylim=c(1, 1.4),
+     main = "Occupancy - weekday in", xlab = "", ylab = "Occupancy")
+lines(x = occupancy_week$timestamp, y = occupancy_week$in_loess, col = "red")
+
+occupancy_week$out_loess <- loess.smooth(x = occupancy_week$timestamp, y = occupancy_week$out_avg, 
+                                         span = 2/3, degree = 1, evaluation = nrow(occupancy_week))$y
+plot(x = occupancy_week$timestamp, y = occupancy_week$out_avg, ylim=c(1, 1.4),
+     main = "Occupancy - weekday out", xlab = "", ylab = "Occupancy")
+lines(x = occupancy_week$timestamp, y = occupancy_week$out_loess, col = "red")
+
+saveRDS(occupancy_week, "data/counters/clean/occupancy_week.Rds")
+
+```
+
+### Weekend
+
+Better data are available for weekend occupancy of cars from 13th Aug 2016.
+
+Again, `loess.smooth` is fitted using data points plus mean values added at the begining and end of the day.
+
+
+```{r warning=FALSE}
+temp <- read_excel("data/counters/raw/UQ_population_count_2016.xlsx", 
+                   sheet = "Occupancy", col_types = c("date", 
+                                                      "numeric", "numeric", "numeric", 
+                                                      "numeric", "skip", "skip", "skip", 
+                                                      "skip", "skip", "numeric", "numeric", 
+                                                      "numeric", "numeric", "skip", "skip", 
+                                                      "skip", "skip", "skip", "skip", 
+                                                      "skip", "skip", "skip", "skip", 
+                                                      "skip"), skip = 2) %>% 
+  clean_names() %>% 
+  rename(timestamp = x1, 
+         in1 = x2, in2 = x3, in3 = x4, in4 = x5,
+         out1 = x6, out2 = x7, out3 = x8, out4 = x9) %>% 
+  filter(!is.na(timestamp)) %>% 
+  mutate(time = strftime(timestamp, format = "%H:%M", tz = "UTC")) %>% 
+  mutate(in_avg = (in1*1 + in2*2 + in3*3 + in4*4) / (in1 + in2 + in3 + in4)) %>% 
+  mutate(out_avg = (out1*1 + out2*2 + out3*3 + out4*4) / (out1 + out2 + out3 + out4)) %>% 
+  select(time, in_avg, out_avg)
+
+occupancy_weekend <- occupancy_week %>% 
+  select(time) %>% 
+  left_join(temp) %>% 
+  mutate(timestamp = ymd_hms(paste0("2016-08-13 ", time, ":00"))) %>% 
+  select(timestamp, time, in_avg, out_avg)
+
+rm(temp)
+
+occupancy_weekend$in_avg[1] <- mean(occupancy_weekend$in_avg, na.rm = TRUE)
+occupancy_weekend$in_avg[nrow(occupancy_weekend)] <- mean(occupancy_weekend$in_avg, na.rm = TRUE)
+
+occupancy_weekend$out_avg[1] <- mean(occupancy_weekend$out_avg, na.rm = TRUE)
+occupancy_weekend$out_avg[nrow(occupancy_weekend)] <- mean(occupancy_weekend$out_avg, na.rm = TRUE)
+
+occupancy_weekend$in_loess <- loess.smooth(x = occupancy_weekend$timestamp, y = occupancy_weekend$in_avg, 
+                                           span = 2/3, degree = 2, evaluation = nrow(occupancy_weekend))$y
+plot(x = occupancy_weekend$timestamp, y = occupancy_weekend$in_avg, ylim=c(1, 1.75),
+     main = "Occupancy - weekend in", xlab = "", ylab = "Occupancy")
+lines(x = occupancy_weekend$timestamp, y = occupancy_weekend$in_loess, col = "red")
+
+
+occupancy_weekend$out_loess <- loess.smooth(x = occupancy_weekend$timestamp, y = occupancy_weekend$out_avg, 
+                                            span = 2/3, degree = 2, evaluation = nrow(occupancy_weekend))$y
+plot(x = occupancy_weekend$timestamp, y = occupancy_weekend$out_avg, ylim=c(1, 1.75),
+     main = "Occupancy - weekend out", xlab = "", ylab = "Occupancy")
+lines(x = occupancy_weekend$timestamp, y = occupancy_weekend$out_loess, col = "red")
+
+saveRDS(occupancy_weekend, "data/counters/clean/occupancy_weekend.Rds")
+
+```
+
+
+## Corrected counts
+
+Counts of cars were corrected with average occupancy for week/weekends and rounded to integers.
+
+```{r}
+vehicles_occupancy <- vehicles %>% 
+  mutate(time = strftime(date, format = "%H:%M", tz = "Australia/Brisbane")) %>% 
+  mutate(dow = strftime(date, format = "%u", tz = "Australia/Brisbane")) %>% 
+  left_join(select(occupancy_week, time, in_loess, out_loess)) %>% 
+  rename(in_loess_week = in_loess, out_loess_week = out_loess) %>% 
+  fill(in_loess_week, .direction = "up") %>% 
+  fill(out_loess_week, .direction = "up") %>% 
+  left_join(select(occupancy_weekend, time, in_loess, out_loess)) %>% 
+  rename(in_loess_weekend = in_loess, out_loess_weekend = out_loess) %>% 
+  fill(in_loess_weekend, .direction = "up") %>% 
+  fill(out_loess_weekend, .direction = "up") %>% 
+  mutate(count_orig = count) %>% 
+  mutate(
+    count = case_when(
+      dow >= 1 & dow <= 5 & direction == "inbound" ~ round(count_orig*in_loess_week),
+      dow >= 1 & dow <= 5 & direction == "outbound" ~ round(count_orig*out_loess_week),
+      dow >= 6 & dow <= 7 & direction == "inbound" ~ round(count_orig*in_loess_weekend),
+      dow >= 6 & dow <= 7 & direction == "outbound" ~ round(count_orig*out_loess_weekend)
+    )
+  ) %>% 
+  select(date, type, site, direction, count)
+
+saveRDS(vehicles_occupancy, "data/counters/clean/vehicles_occupancy.Rds")
+
+```
+
+
+## Results - Chancellors, Schonell, McGregor
+
+Example counts for `2016-08-16` across type and direction.
+
+```{r}
+vehicles_occupancy %>% 
+  filter(date >= ymd_hms("2016-08-16 04:00:00", tz = "Australia/Brisbane")) %>% 
+  filter(date <= ymd_hms("2016-08-16 23:59:59", tz = "Australia/Brisbane")) %>% 
+  ggplot(aes(x = date, y = count)) + 
+  geom_line(aes(group = interaction(type, direction), color = direction)) + 
+  scale_x_datetime() + theme_minimal() + 
+  xlab("") + ylab("Vehicle counts") +
+  facet_wrap(~site, ncol = 1)
+
+```
+
+# Combining counts
+
+## Counts across direction
+
+`public_transport`, `green_bridge`, `macquarie_bikes`, `vehicles_occupancy` datasets were combined. 
+
+With transport mode, example of one day:
+
+```{r}
+uq_campus_long <- bind_rows(public_transport, green_bridge, macquarie_bikes, vehicles_occupancy)
+
+uq_campus_long %>% 
+  filter(date >= ymd_hms("2016-08-16 04:00:00", tz = "Australia/Brisbane")) %>% 
+  filter(date <= ymd_hms("2016-08-16 23:59:59", tz = "Australia/Brisbane")) %>% 
+  mutate(count = ifelse(test = direction == "outbound", yes = -1 * count, no = count)) %>%
+  ggplot(aes(x = date, y = count)) + 
+  geom_col(aes(fill = type)) + 
+  scale_x_datetime() + theme_minimal() + 
+  xlab("") + ylab("People* counts") + 
+  geom_hline(yintercept = 0)
+
+
+# uq_campus_long %>% 
+#   filter(date >= ymd_hms("2016-08-16 04:00:00", tz = "Australia/Brisbane")) %>% 
+#   filter(date <= ymd_hms("2016-08-16 23:59:59", tz = "Australia/Brisbane")) %>% 
+#   ggplot(aes(x = date, y = count)) + 
+#   geom_col(aes(fill = type)) + 
+#   scale_x_datetime() + theme_minimal() + 
+#   xlab("") + ylab("People* counts") +
+#   facet_wrap(~direction, ncol = 1)
+
+```
+
+Ignoring transport mode, example of one day:
+
+```{r}
+uq_campus_long %>% 
+  filter(date >= ymd_hms("2016-08-16 04:00:00", tz = "Australia/Brisbane")) %>% 
+  filter(date <= ymd_hms("2016-08-16 23:59:59", tz = "Australia/Brisbane")) %>% 
+  mutate(count = ifelse(test = direction == "outbound", yes = -1 * count, no = count)) %>%
+  ggplot(aes(x = date, y = count)) + 
+  geom_col(aes(fill = direction)) + 
+  scale_x_datetime() + theme_minimal() + 
+  xlab("") + ylab("People* counts") +
+  geom_hline(yintercept = 0)
+
+saveRDS(uq_campus_long, "data/counters/clean/uq_campus_long.Rds")
+# write_csv(uq_campus_long, "data/counters/clean/uq_campus_long.csv")
+
+```
+
+
+```{r}
+uq_campus_wide <- uq_campus_long %>% 
+  group_by(date, direction) %>% 
+  summarise(count = sum(count)) %>% 
+  spread(direction, count) %>% 
+  ungroup() %>% 
+  rename(timestamp = date) %>% 
+  mutate(date = date(timestamp)) %>% 
+  mutate(time = strftime(timestamp, format = "%H:%M")) %>% 
+  select(timestamp, date, time, everything()) 
+# %>%
+#   mutate(net = inbound - outbound) %>%
+#   group_by(date(date)) %>%
+#   mutate(stock = cumsum(net))
+
+saveRDS(uq_campus_wide, "data/counters/clean/uq_campus_wide.Rds")
+# write_csv(uq_campus_wide, "data/counters/clean/uq_campus_wide.csv")
+
+```
+
+
+## Stocks on campus 
+
+Calculated by mode & site without modifications 
+
+```{r echo=FALSE}
+uq_campus_long %>% 
+  filter(date >= ymd_hms("2016-08-15 00:00:00", tz = "Australia/Brisbane")) %>% 
+  mutate(count = ifelse(test = direction == "outbound", yes = -1 * count, no = count)) %>%
+  mutate(type = ifelse(test = type == "public_transport", yes = "public-transport", no = type)) %>%
+  mutate(site = ifelse(test = site == "green_bridge", yes = "green-bridge", no = site)) %>%
+  spread(direction, count) %>% 
+  mutate(net = inbound + outbound) %>% 
+  unite(temp, type, site) %>%
+  arrange(date, temp) %>% 
+  group_by(temp) %>% 
+  mutate(stock = cumsum(net)) %>% 
+  ungroup() %>% 
+  separate(temp, sep = "_", c("Mode", "Place"), remove = FALSE) %>% 
+  ggplot(aes(x = date, y = stock, group = temp, color = Place)) + 
+  geom_line() + 
+  scale_x_datetime() + theme_minimal() + 
+  xlab("") + ylab("Stocks from bike & pedestrian counts") + 
+  facet_wrap(~Mode)
+```
+
+
+

@@ -1,0 +1,1175 @@
+---
+title: "POP247 - campus EDA"
+subtitle: "Models for St Lucia - Wi-Fi counts with pedestrians, cyclists & vehicles"
+author: "Radoslaw Panczak"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+mainfont: DejaVu Sans
+output: 
+  html_document: 
+    highlight: pygments
+    number_sections: yes
+    theme: united
+    toc: yes
+    toc_depth: 4
+    toc_float: yes
+---
+
+<!-- ------------------------------------------------------------ --> 
+<!-- ------------------------------------------------------------ --> 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, 
+                      fig.width=8, fig.height=6, dpi=300, 
+                      out.width="800px", out.height="600px",
+                      cache=FALSE)
+
+# knitr::opts_knit$set(root.dir = 'R:/POP247-Q0786/')
+# setwd('R:/POP247-Q0786/')
+
+set.seed(12345)
+options(scipen = 999)
+
+library(pacman) 
+p_load(tidyverse, magrittr, lubridate, corrplot, scales, sugrrants,
+       fitdistrplus, INLA, INLAutils, gganimate)
+
+# inla.setOption(num.threads = 1) 
+
+```
+
+<!-- ------------------------------------------------------------ --> 
+<!-- ------------------------------------------------------------ --> 
+
+# Data
+
+<!-- ------------------------------------------------------------ --> 
+
+## Pedestrian & bike counts
+
+### Original data
+
+```{r echo=FALSE}
+green_bridge <- readRDS("data/counters/clean/green_bridge_15M.Rds") %>% 
+  dplyr::select(-site) %>% 
+  filter(date >= ymd_hms("2018-12-03 00:00:00", tz = "Australia/Brisbane")) %>% 
+  filter(date <= ymd_hms("2019-03-24 23:59:59", tz = "Australia/Brisbane")) 
+```
+
+Detailed example counts for week of `2018-12-03` across type and direction.
+
+```{r echo=FALSE}
+green_bridge %>% 
+  filter(date <= ymd_hms("2018-12-09 23:59:59", tz = "Australia/Brisbane")) %>%
+  mutate(count = ifelse(test = direction == "outbound", yes = -1 * count, no = count)) %>%
+  ggplot(aes(x = date, y = count)) + 
+  geom_line(aes(group = interaction(type, direction), color = type)) + 
+  scale_x_datetime() + theme_minimal() + 
+  xlab("") + ylab("Bike / pedestrian counts")
+
+```
+
+Overview of four months, cyclists, outbound
+
+```{r echo=FALSE, warning=FALSE}
+p <- green_bridge %>%
+  filter(direction == "outbound") %>%
+  filter(type == "cyclists") %>%
+  rename(date_time = date) %>% 
+  mutate(weekday = strftime(date_time, format = "%A", tz = "Australia/Brisbane"),
+         weekend = if_else(weekday %in% c("Saturday", "Sunday"), "Weekend", "Weekday"),
+         date = as.Date(date_time, tz = "Australia/Brisbane"),
+         time = as.numeric(format(date_time, "%H")) + as.numeric(format(date_time, "%M"))/60) %>%
+  frame_calendar(x = time, y = count, date = date) %>% 
+  ggplot(aes(x = .time, y = .count, group = date, colour = weekend)) +
+  geom_line() +
+  theme(legend.position = "none") + 
+  theme_minimal()
+
+prettify(p)
+```
+
+### Stocks on campus 
+
+#### Without modification
+
+```{r echo=FALSE}
+green_bridge_wide <- green_bridge %>% 
+  unite(temp, type, direction) %>%
+  spread(temp, count) %>% 
+  mutate(net = cyclists_inbound - cyclists_outbound + pedestrians_inbound - pedestrians_outbound) %>% 
+  mutate(stock = cumsum(net)) 
+
+green_bridge_wide %>% 
+  ggplot(aes(x = date, y = stock)) + 
+  geom_line() + 
+  scale_x_datetime() + theme_minimal() + 
+  xlab("") + ylab("Stocks from bike & pedestrian counts")
+```
+
+#### With midnight 'reset'
+
+```{r echo=FALSE}
+green_bridge_wide <- green_bridge %>% 
+  unite(temp, type, direction) %>%
+  spread(temp, count) %>% 
+  mutate(net = cyclists_inbound - cyclists_outbound + pedestrians_inbound - pedestrians_outbound) %>% 
+  group_by(date(date)) %>%
+  mutate(stock = cumsum(net)) %>% 
+  ungroup()
+
+green_bridge_wide %>% 
+  ggplot(aes(x = date, y = stock)) + 
+  geom_line() + 
+  scale_x_datetime() + theme_minimal() + 
+  xlab("") + ylab("Stocks from bike & pedestrian counts")
+```
+
+
+#### Frequency of stocks from whole period
+
+```{r echo=FALSE}
+green_bridge_wide %>% 
+  ggplot(aes(x = stock)) + 
+  geom_histogram(binwidth = 10) + 
+  theme_minimal() + 
+  xlab("") + ylab("Wi-Fi users") 
+```
+
+
+<!-- ------------------------------------------------------------ --> 
+## Vehicle occupancy
+
+Few data points exist for observarions of car occupancy for weekday from the 2015 Survey (Tue 18th Aug).
+
+Better data are available for weekend occupancy of cars from 13th Aug 2016.
+
+`loess.smooth` is fitted using data points plus mean values added at the begining and end of the day.
+
+```{r}
+occupancy_week <- readRDS("data/counters/clean/occupancy_week.Rds")
+occupancy_weekend <- readRDS("data/counters/clean/occupancy_weekend.Rds")
+```
+
+```{r}
+par(mfrow=c(2,2))
+
+plot(x = occupancy_week$timestamp, y = occupancy_week$in_avg, ylim=c(1, 1.4),
+     main = "Occupancy - weekday in", xlab = "", ylab = "Occupancy")
+lines(x = occupancy_week$timestamp, y = occupancy_week$in_loess, col = "red")
+
+plot(x = occupancy_week$timestamp, y = occupancy_week$out_avg, ylim=c(1, 1.4),
+     main = "Occupancy - weekday out", xlab = "", ylab = "Occupancy")
+lines(x = occupancy_week$timestamp, y = occupancy_week$out_loess, col = "red")
+
+plot(x = occupancy_weekend$timestamp, y = occupancy_weekend$in_avg, ylim=c(1, 1.75),
+     main = "Occupancy - weekend in", xlab = "", ylab = "Occupancy")
+lines(x = occupancy_weekend$timestamp, y = occupancy_weekend$in_loess, col = "red")
+
+plot(x = occupancy_weekend$timestamp, y = occupancy_weekend$out_avg, ylim=c(1, 1.75),
+     main = "Occupancy - weekend out", xlab = "", ylab = "Occupancy")
+lines(x = occupancy_weekend$timestamp, y = occupancy_weekend$out_loess, col = "red")
+
+```
+
+```{r include=FALSE}
+dev.off()
+```
+
+<!-- ------------------------------------------------------------ --> 
+## Vehicle counts
+
+Data from BCC traffic monitoring 
+
+### Original data
+
+```{r echo=FALSE}
+bcc_traffic <- readRDS("data/BCC/traffic_official/clean/bcc_traffic_8074.Rds") %>% 
+  rename(date = recorded_15) %>% 
+  filter(date >= ymd_hms("2018-12-03 00:00:00", tz = "Australia/Brisbane")) %>% 
+  filter(date <= ymd_hms("2019-03-24 23:59:59", tz = "Australia/Brisbane")) %>% 
+  gather(code, mf, d1:d9) %>% 
+  filter(!code %in% c("d7", "d8", "d9")) %>% 
+  mutate(direction = case_when(
+    code == "d1" ~ "inbound",
+    code == "d2" ~ "inbound",
+    code == "d3" ~ "outbound",
+    code == "d4" ~ "outbound",
+    code == "d5" ~ "inbound",
+    code == "d6" ~ "inbound"
+  )) %>% 
+  group_by(date, direction) %>% 
+  summarise(mf = sum(mf, na.rm = TRUE)) %>% 
+  ungroup() %>% 
+  spread(direction, mf) %>% 
+  mutate(net = inbound - outbound)
+
+bcc_traffic_occupancy <- bcc_traffic %>% 
+  mutate(time = strftime(date, format = "%H:%M", tz = "Australia/Brisbane")) %>% 
+  mutate(dow = strftime(date, format = "%u", tz = "Australia/Brisbane")) %>% 
+  left_join(dplyr::select(occupancy_week, time, in_loess, out_loess)) %>% 
+  rename(in_loess_week = in_loess, out_loess_week = out_loess) %>% 
+  fill(in_loess_week, .direction = "up") %>% 
+  fill(out_loess_week, .direction = "up") %>% 
+  left_join(dplyr::select(occupancy_weekend, time, in_loess, out_loess)) %>% 
+  rename(in_loess_weekend = in_loess, out_loess_weekend = out_loess) %>% 
+  fill(in_loess_weekend, .direction = "up") %>% 
+  fill(out_loess_weekend, .direction = "up") %>% 
+  mutate(inbound_orig = inbound, outbound_orig = outbound, net_orig = net) %>% 
+  mutate(
+    inbound = case_when(
+      dow >= 1 & dow <= 5 ~ round(inbound_orig*in_loess_week),
+      dow >= 6 & dow <= 7 ~ round(inbound_orig*in_loess_weekend)
+    )
+  ) %>% 
+  mutate(
+    outbound = case_when(
+      dow >= 1 & dow <= 5 ~ round(outbound_orig*out_loess_week),
+      dow >= 6 & dow <= 7 ~ round(outbound_orig*out_loess_weekend)
+    )
+  ) %>% 
+  mutate(net = inbound - outbound) %>% 
+  dplyr::select(-in_loess_week, -in_loess_weekend, -out_loess_week, -out_loess_weekend)
+
+
+```
+
+Detailed example counts for week of `2018-12-03` across type and direction. Both original counts (`_orig` suffix on legend) and counts corrected with occupancy are plotted.
+
+```{r echo=FALSE}
+bcc_traffic_occupancy %>% 
+  dplyr::select(date, inbound, outbound, inbound_orig, outbound_orig) %>% 
+  gather("direction", "count", inbound:outbound_orig) %>% 
+  filter(date <= ymd_hms("2018-12-09 23:59:59", tz = "Australia/Brisbane")) %>%
+  mutate(count = ifelse(test = direction == "outbound", yes = -1 * count, no = count)) %>%
+  mutate(count = ifelse(test = direction == "outbound_orig", yes = -1 * count, no = count)) %>%
+  ggplot(aes(x = date, y = count)) + 
+  geom_line(aes(group = direction, color = direction)) + 
+  scale_x_datetime() + theme_minimal() + 
+  xlab("") + ylab("Vehicle counts")
+
+```
+
+Overview of four months, inbound
+
+```{r echo=FALSE, warning=FALSE}
+p <- bcc_traffic_occupancy %>%
+  rename(date_time = date) %>% 
+  mutate(weekday = strftime(date_time, format = "%A", tz = "Australia/Brisbane"),
+         weekend = if_else(weekday %in% c("Saturday", "Sunday"), "Weekend", "Weekday"),
+         date = as.Date(date_time, tz = "Australia/Brisbane"),
+         time = as.numeric(format(date_time, "%H")) + as.numeric(format(date_time, "%M"))/60) %>%
+  frame_calendar(x = time, y = inbound, date = date) %>% 
+  ggplot(aes(x = .time, y = .inbound, group = date, colour = weekend)) +
+  geom_line() +
+  theme(legend.position = "none") + 
+  theme_minimal()
+
+prettify(p)
+```
+
+### Stocks on campus 
+
+#### Without modification
+
+```{r echo=FALSE}
+bcc_traffic_occupancy <- bcc_traffic_occupancy %>%
+  mutate(stock = cumsum(net)) 
+
+bcc_traffic_occupancy %>% 
+  ggplot(aes(x = date, y = stock)) + 
+  geom_line() + 
+  scale_x_datetime() + theme_minimal() + 
+  xlab("") + ylab("Stocks of vehicles")
+```
+
+#### With midnight 'reset'
+
+```{r echo=FALSE}
+bcc_traffic_occupancy <- bcc_traffic_occupancy %>%
+  group_by(date(date)) %>%
+  mutate(stock = cumsum(net)) %>% 
+  ungroup()
+
+bcc_traffic_occupancy %>% 
+  ggplot(aes(x = date, y = stock)) + 
+  geom_line() + 
+  scale_x_datetime() + theme_minimal() + 
+  xlab("") + ylab("Stocks of vehicles")
+```
+
+
+#### Frequency of stocks from whole period
+
+```{r echo=FALSE}
+bcc_traffic_occupancy %>% 
+  ggplot(aes(x = stock)) + 
+  geom_histogram(binwidth = 10) + 
+  theme_minimal() + 
+  xlab("") + ylab("Wi-Fi users") 
+```
+
+
+<!-- ------------------------------------------------------------ --> 
+
+## Wi-Fi
+
+### Original data 
+
+```{r echo=FALSE}
+prime_agg <- readRDS("R:/WIFIUQHPC-Q0766/data/clean/processed_prime_reports/prime_agg_2018_12_2019_04.Rds") %>% 
+  rename(date = timestamp) %>% 
+  filter(date >= ymd_hms("2018-12-03 00:00:00", tz = "Australia/Brisbane")) %>% 
+  filter(date <= ymd_hms("2019-03-24 23:59:59", tz = "Australia/Brisbane")) 
+
+# tz(prime_agg$date)
+
+```
+
+Detailed counts for week of `2018-12-09` across type of data.
+
+```{r echo=FALSE}
+prime_agg %>% 
+  filter(date <= ymd_hms("2018-12-09 23:59:59", tz = "Australia/Brisbane")) %>%
+  ggplot(aes(x = date, y = users_mac)) + 
+  geom_line() +
+  scale_x_datetime() + theme_minimal() + 
+  xlab("") + ylab("Wi-Fi users")
+
+```
+
+Overview of four months, connected users
+
+```{r echo=FALSE, warning=FALSE}
+p <- prime_agg %>%
+  mutate(weekday = strftime(date, format = "%A", tz = "Australia/Brisbane"),
+         weekend = if_else(weekday %in% c("Saturday", "Sunday"), "Weekend", "Weekday"),
+         time = as.numeric(format(date, "%H", tz = "Australia/Brisbane")) + 
+           as.numeric(format(date, "%M", tz = "Australia/Brisbane"))/60,
+         date2 = as.Date(date, tz = "Australia/Brisbane")) %>%
+  frame_calendar(x = time, y = users_mac, date = date2) %>% 
+  ggplot(aes(x = .time, y = .users_mac, group = date2, colour = weekend)) +
+  geom_line() +
+  theme(legend.position = "none") + 
+  theme_minimal()
+
+prettify(p)
+```
+
+
+### Distribution of counts
+
+Frequency of counts from whole period
+
+```{r echo=FALSE}
+prime_agg %>% 
+  ggplot(aes(x = users_mac)) + 
+  geom_histogram(binwidth = 100) + 
+  theme_minimal() + 
+  xlab("") + ylab("Wi-Fi users") 
+```
+
+### Distribution fits 
+
+```{r echo=FALSE}
+prime_agg_poi <- fitdist(prime_agg$users_mac, "pois")
+prime_agg_nb <- fitdist(prime_agg$users_mac, "nbinom")
+
+par(mfrow = c(1,2))
+denscomp(list(prime_agg_poi, prime_agg_nb), legendtext = c("Poisson", "negative binomial"), fitlty = 1)
+cdfcomp(list(prime_agg_poi, prime_agg_nb), legendtext = c("Poisson", "negative binomial"), fitlty = 1)
+
+# gofstat(list(prime_agg_poi, prime_agg_nb), fitnames = c("Poisson", "negative binomial"))
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+dev.off()
+rm(prime_agg_poi, prime_agg_nb)
+```
+
+## Weather
+
+```{r echo=FALSE}
+uqweather <- readRDS(here::here("data", "uqweather", "clean", "uqweather.Rds")) %>% 
+  mutate(timestamp = force_tz(timestamp, tzone = "Australia/Brisbane")) %>% 
+  filter(timestamp >= ymd_hms("2018-12-03 00:00:00", tz = "Australia/Brisbane") & 
+           timestamp <= ymd_hms("2019-03-24 23:59:59", tz = "Australia/Brisbane")) %>% 
+  dplyr::select(timestamp, temp_mean_deg, starts_with("rain"))
+
+# attr(uqweather$timestamp,"tzone")
+```
+
+### Temperature
+
+```{r echo=FALSE}
+uqweather %>% 
+  ggplot(aes(x=timestamp, y=temp_mean_deg)) +
+  scale_x_datetime() +
+  geom_line() + theme_minimal() + 
+  geom_smooth(se = FALSE) +
+  xlab("") + ylab("Temperature")
+```
+
+### Rain  
+
+#### Daily accumulated 
+
+```{r echo=FALSE}
+uqweather %>% 
+  mutate(date = as.Date(timestamp)) %>% 
+  group_by(date) %>% 
+  summarise(rain_acc_mm = max(rain_acc_mm)) %>% 
+  ggplot(aes(x=date, y=rain_acc_mm)) +
+  scale_x_date() +
+  geom_col() + theme_minimal() + 
+  xlab("") + ylab("Rain acc daily [mm]") 
+```
+
+#### Intensity
+
+```{r echo=FALSE}
+uqweather %>% 
+  ggplot(aes(x=timestamp, y=rain_intensity_mm_h)) +
+  scale_x_datetime() +
+  geom_line() + theme_minimal() + 
+  xlab("") + ylab("Rain intensity [mm/h]")
+```
+
+<!-- ------------------------------------------------------------ --> 
+<!-- ------------------------------------------------------------ --> 
+
+# Time series comparisons
+
+```{r echo=FALSE}
+data <- full_join(prime_agg, green_bridge_wide) %>% 
+  dplyr::select(-`date(date)`) %>% 
+  rename(ped_net = net, ped_stock = stock,
+         ped_in = pedestrians_inbound, ped_out = pedestrians_outbound,
+         cyc_in = cyclists_inbound, cyc_out = cyclists_outbound) %>% 
+  full_join(dplyr::select(bcc_traffic_occupancy, date, inbound, outbound, net, stock)) %>%
+  # dplyr::select(-`date(date)`) %>% 
+  rename(veh_net = net, veh_stock = stock,
+         veh_in = inbound, veh_out = outbound) %>% 
+  # filter(!is.na(veh_stock)) %>% 
+  mutate(weekday = strftime(date, format = "%A", tz = "Australia/Brisbane"),
+         weekend = if_else(weekday %in% c("Saturday", "Sunday"), "Weekend", "Weekday"),
+         time = as.numeric(date - min(prime_agg$date)) / 900) %>% 
+  mutate(stock = veh_stock + ped_stock) %>% 
+  left_join(rename(uqweather, date = timestamp)) %>% 
+  mutate(holidays = ifelse(date >= ymd_hms("2018-12-23 00:00:00", tz = "Australia/Brisbane") & 
+                             date <= ymd_hms("2019-01-02 23:59:59", tz = "Australia/Brisbane"),
+                           yes = "yes", no = "no"))
+
+
+# sapply(data, function(x) sum(is.na(x)))
+# rm(prime_agg, green_bridge, green_bridge_wide, bcc_traffic, uqweather)
+```
+
+## Cyclists 
+
+### Inbound, connected users
+
+```{r echo=FALSE}
+data %>% 
+  filter(date <= ymd_hms("2018-12-09 23:59:59", tz = "Australia/Brisbane")) %>%
+  dplyr::select(date, users_mac, cyc_in) %>% 
+  gather(key = "type", value = "count", users_mac:cyc_in) %>% 
+  ggplot(aes(x = date, y = count)) +
+  geom_line() +
+  theme(legend.position = "none") + 
+  theme_minimal() + ylab("Connected users") +
+  facet_wrap(~type, ncol = 1, scales = "free_y")
+```
+
+### Outbound, connected users
+
+```{r echo=FALSE}
+data %>% 
+  filter(date <= ymd_hms("2018-12-09 23:59:59", tz = "Australia/Brisbane")) %>%
+  dplyr::select(date, users_mac, cyc_out) %>% 
+  gather(key = "type", value = "count", users_mac:cyc_out) %>% 
+  ggplot(aes(x = date, y = count)) +
+  geom_line() +
+  theme(legend.position = "none") + 
+  theme_minimal() + ylab("Connected users") +
+  facet_wrap(~type, ncol = 1, scales = "free_y")
+```
+
+
+## Pedestrians 
+
+### Inbound, connected users
+
+```{r echo=FALSE}
+data %>% 
+  filter(date <= ymd_hms("2018-12-09 23:59:59", tz = "Australia/Brisbane")) %>%
+  dplyr::select(date, users_mac, ped_in) %>% 
+  gather(key = "type", value = "count", users_mac:ped_in) %>% 
+  ggplot(aes(x = date, y = count)) +
+  geom_line() +
+  theme(legend.position = "none") + 
+  theme_minimal() + ylab("Connected users") +
+  facet_wrap(~type, ncol = 1, scales = "free_y")
+```
+
+### Outbound, connected users
+
+```{r echo=FALSE}
+data %>% 
+  filter(date <= ymd_hms("2018-12-09 23:59:59", tz = "Australia/Brisbane")) %>%
+  dplyr::select(date, users_mac, ped_out) %>% 
+  gather(key = "type", value = "count", users_mac:ped_out) %>% 
+  ggplot(aes(x = date, y = count)) +
+  geom_line() +
+  theme(legend.position = "none") + 
+  theme_minimal() + ylab("Connected users") +
+  facet_wrap(~type, ncol = 1, scales = "free_y")
+```
+
+## Traffic
+
+### Inbound, connected users
+
+```{r echo=FALSE}
+data %>% 
+  filter(date <= ymd_hms("2018-12-09 23:59:59", tz = "Australia/Brisbane")) %>%
+  dplyr::select(date, users_mac, veh_in) %>% 
+  gather(key = "type", value = "count", users_mac:veh_in) %>% 
+  ggplot(aes(x = date, y = count)) +
+  geom_line() +
+  theme(legend.position = "none") + 
+  theme_minimal() + ylab("Connected users") +
+  facet_wrap(~type, ncol = 1, scales = "free_y")
+```
+
+### Outbound, connected users
+
+```{r echo=FALSE}
+data %>% 
+  filter(date <= ymd_hms("2018-12-09 23:59:59", tz = "Australia/Brisbane")) %>%
+  dplyr::select(date, users_mac, veh_out) %>% 
+  gather(key = "type", value = "count", users_mac:veh_out) %>% 
+  ggplot(aes(x = date, y = count)) +
+  geom_line() +
+  theme(legend.position = "none") + 
+  theme_minimal() + ylab("Connected users") +
+  facet_wrap(~type, ncol = 1, scales = "free_y")
+```
+
+## Net of traffic, net of pedestrians, connected users
+
+```{r echo=FALSE}
+data %>% 
+  filter(date <= ymd_hms("2018-12-09 23:59:59", tz = "Australia/Brisbane")) %>%
+  dplyr::select(date, users_mac, ped_net, veh_net) %>% 
+  gather(key = "type", value = "count", users_mac:veh_net) %>% 
+  ggplot(aes(x = date, y = count)) +
+  geom_line() +
+  theme(legend.position = "none") + 
+  theme_minimal() + ylab("Connected users") +
+  facet_wrap(~type, ncol = 1, scales = "free_y")
+```
+
+## Stock of traffic, stock of pedestrians, overall stock, connected users
+
+```{r echo=FALSE}
+data %>% 
+  filter(date <= ymd_hms("2018-12-09 23:59:59", tz = "Australia/Brisbane")) %>%
+  dplyr::select(date, users_mac, ped_stock, veh_stock, stock) %>% 
+  gather(key = "type", value = "count", users_mac:stock) %>% 
+  ggplot(aes(x = date, y = count)) +
+  geom_line() +
+  theme(legend.position = "none") + 
+  theme_minimal() + ylab("Connected users") +
+  facet_wrap(~type, ncol = 1, scales = "free_y")
+```
+
+```{r eval=FALSE}
+data %>% 
+  # filter(date >= ymd_hms("2019-01-06 23:59:59", tz = "Australia/Brisbane")) %>%
+  dplyr::select(date, users_mac, stock) %>% 
+  gather(key = "type", value = "count", users_mac:stock) %>% 
+  ggplot(aes(x = date, y = count)) +
+  geom_line() +
+  theme(legend.position = "none") + 
+  theme_minimal() + ylab("Connected users") +
+  facet_wrap(~type, ncol = 1, scales = "free_y")
+```
+
+## Weather, connected users
+
+```{r echo=FALSE}
+data %>% 
+  dplyr::select(date, users_mac, temp_mean_deg, rain_acc_mm, rain_intensity_mm_h) %>% 
+  gather(key = "type", value = "count", users_mac:rain_intensity_mm_h) %>% 
+  ggplot(aes(x = date, y = count)) +
+  geom_line() +
+  theme(legend.position = "none") + 
+  theme_minimal() + ylab("Connected users") +
+  facet_wrap(~type, ncol = 1, scales = "free_y")
+```
+
+# Correlations, connected users 
+
+```{r echo=FALSE}
+M <- cor(dplyr::select(data, users_mac, 
+                       cyc_in, cyc_out, ped_in, ped_out, veh_in, veh_out, 
+                       ped_net, ped_stock, veh_net, veh_stock, stock), use = "complete.obs")
+
+corrplot.mixed(M)
+rm(M)
+```
+
+<!-- ------------------------------------------------------------ --> 
+<!-- ------------------------------------------------------------ --> 
+
+# Models
+
+## INLA setup
+
+```{r echo=TRUE, results=FALSE}
+# ####
+# Jeffreys prior 
+a1 <- 5e-5
+b1 <- 5e-5
+lgprior1 <- list(prec = list(param = c(a1, b1)))
+
+# Gelman prior
+a2 <- -0.5
+b2 <- 5e-5
+lgprior2 <- list(prec = list(param = c(a2, b2)))
+
+# iid prior 
+# Schrödle & Held 2010 & Blangiardo et al 2013
+a0 <- 1
+b0 <- 0.1
+prior.nu <- list(prec = list(param = c(a0, b0)))
+
+# intercept & fixed
+inla.set.control.fixed.default() 
+
+# intercept ~ N(0,0) 
+# other fixed effects ~ N(0, 0.001) 
+# 
+# where the format is N(mean, precision) 
+# precision = inverse of the variance. 
+
+# PC prior
+U <- 1
+hyper.prec = list(theta = list(
+  prior = "pc.prec",
+  param = c(U, 0.01)
+))
+
+# scaling 
+inla.setOption(scale.model.default = TRUE)
+
+```
+
+## Pedestrians & bikes only
+
+### One trend for ped_stocks
+
+```{r}
+ped1 <- inla(users_mac ~ 
+               f(ped_stock, model = "rw1", scale.model = TRUE, hyper = hyper.prec), 
+             family = "nbinomial", 
+             control.compute = list(dic= TRUE, waic = TRUE),  
+             data = data)
+```
+
+```{r eval=FALSE, include=FALSE}
+ped1_fit <- bind_cols(time = data$time, count = data$users_mac,
+                      fit = ped1$summary.fitted.values$`0.5quant`,
+                      lci = ped1$summary.fitted.values$`0.025quant`, 
+                      uci = ped1$summary.fitted.values$`0.975quant`)
+
+```
+
+### One trend for ped_stocks + weekday
+
+```{r}
+ped2 <- inla(users_mac ~ 
+               weekday +
+               f(ped_stock, model = "rw1", scale.model = TRUE, hyper = hyper.prec), 
+             family = "nbinomial", 
+             control.compute = list(dic= TRUE, waic = TRUE),  
+             data = data)
+```
+
+```{r eval=FALSE, include=FALSE}
+ped2_fit <- bind_cols(time = data$time, count = data$users_mac,
+                      fit = ped2$summary.fitted.values$`0.5quant`,
+                      lci = ped2$summary.fitted.values$`0.025quant`, 
+                      uci = ped2$summary.fitted.values$`0.975quant`)
+
+```
+
+### One trend for ped_stocks + weekdays + holidays
+
+```{r}
+ped3 <- inla(users_mac ~ 
+               holidays +
+               weekday +
+               f(ped_stock, model = "rw1", scale.model = TRUE, hyper = hyper.prec), 
+             family = "nbinomial", 
+             control.compute = list(dic= TRUE, waic = TRUE),  
+             data = data)
+```
+
+```{r eval=FALSE, include=FALSE}
+ped3_fit <- bind_cols(time = data$time, count = data$users_mac,
+                      fit = ped3$summary.fitted.values$`0.5quant`,
+                      lci = ped3$summary.fitted.values$`0.025quant`, 
+                      uci = ped3$summary.fitted.values$`0.975quant`)
+
+```
+
+
+## Vehicles
+
+### One trend for stocks
+
+```{r}
+veh1 <- inla(users_mac ~ 
+               f(veh_stock, model = "rw1", scale.model = TRUE, hyper = hyper.prec), 
+             family = "nbinomial", 
+             control.compute = list(dic= TRUE, waic = TRUE),  
+             data = data)
+```
+
+```{r eval=FALSE, include=FALSE}
+veh1_fit <- bind_cols(time = data$time, count = data$users_mac,
+                      fit = veh1$summary.fitted.values$`0.5quant`,
+                      lci = veh1$summary.fitted.values$`0.025quant`, 
+                      uci = veh1$summary.fitted.values$`0.975quant`)
+
+```
+
+### One trend for stocks + weekday
+
+```{r}
+veh2 <- inla(users_mac ~ 
+               weekday +
+               f(veh_stock, model = "rw1", scale.model = TRUE, hyper = hyper.prec), 
+             family = "nbinomial", 
+             control.compute = list(dic= TRUE, waic = TRUE),  
+             data = data)
+```
+
+```{r eval=FALSE, include=FALSE}
+veh2_fit <- bind_cols(time = data$time, count = data$users_mac,
+                      fit = veh2$summary.fitted.values$`0.5quant`,
+                      lci = veh2$summary.fitted.values$`0.025quant`, 
+                      uci = veh2$summary.fitted.values$`0.975quant`)
+
+```
+
+### One trend for stocks + weekday + holidays
+
+```{r}
+veh3 <- inla(users_mac ~ 
+               holidays +
+               weekday +
+               f(veh_stock, model = "rw1", scale.model = TRUE, hyper = hyper.prec), 
+             family = "nbinomial", 
+             control.compute = list(dic= TRUE, waic = TRUE),  
+             data = data)
+```
+
+```{r eval=FALSE, include=FALSE}
+veh3_fit <- bind_cols(time = data$time, count = data$users_mac,
+                      fit = veh3$summary.fitted.values$`0.5quant`,
+                      lci = veh3$summary.fitted.values$`0.025quant`, 
+                      uci = veh3$summary.fitted.values$`0.975quant`)
+
+```
+
+
+## Both stocks
+
+### One trend for stocks
+
+```{r}
+both1 <- inla(users_mac ~ 
+                f(veh_stock, model = "rw1", scale.model = TRUE, hyper = hyper.prec) + 
+                f(ped_stock, model = "rw1", scale.model = TRUE, hyper = hyper.prec), 
+              family = "nbinomial", 
+              control.compute = list(dic= TRUE, waic = TRUE),  
+              data = data)
+```
+
+```{r eval=FALSE, include=FALSE}
+both1_fit <- bind_cols(time = data$time, count = data$users_mac,
+                       fit = both1$summary.fitted.values$`0.5quant`,
+                       lci = both1$summary.fitted.values$`0.025quant`, 
+                       uci = both1$summary.fitted.values$`0.975quant`)
+
+```
+
+### One trend for stocks + weekday
+
+```{r}
+both2 <- inla(users_mac ~ 
+                weekday +
+                f(veh_stock, model = "rw1", scale.model = TRUE, hyper = hyper.prec) + 
+                f(ped_stock, model = "rw1", scale.model = TRUE, hyper = hyper.prec),
+              family = "nbinomial", 
+              control.compute = list(dic= TRUE, waic = TRUE),  
+              data = data)
+```
+
+```{r eval=FALSE, include=FALSE}
+both2_fit <- bind_cols(time = data$time, count = data$users_mac,
+                       fit = both2$summary.fitted.values$`0.5quant`,
+                       lci = both2$summary.fitted.values$`0.025quant`, 
+                       uci = both2$summary.fitted.values$`0.975quant`)
+
+```
+
+### One trend for stocks + weekday + holidays
+
+```{r}
+both3 <- inla(users_mac ~ 
+                holidays +
+                weekday +
+                f(veh_stock, model = "rw1", scale.model = TRUE, hyper = hyper.prec) + 
+                f(ped_stock, model = "rw1", scale.model = TRUE, hyper = hyper.prec),
+              family = "nbinomial", 
+              control.compute = list(dic= TRUE, waic = TRUE),  
+              data = data)
+```
+
+```{r eval=FALSE, include=FALSE}
+both3_fit <- bind_cols(time = data$time, count = data$users_mac,
+                       fit = both3$summary.fitted.values$`0.5quant`,
+                       lci = both3$summary.fitted.values$`0.025quant`, 
+                       uci = both3$summary.fitted.values$`0.975quant`)
+
+```
+
+
+## Comparing
+
+### DIC
+
+```{r echo=FALSE}
+dotchart(c(ped1$dic$dic, ped2$dic$dic, ped3$dic$dic,
+           veh1$dic$dic, veh2$dic$dic, veh3$dic$dic,
+           both1$dic$dic, both2$dic$dic, both3$dic$dic),
+         labels = c("ped1", "ped2", "ped3", "veh1", "veh2", "veh3", "both1", "both2", "both3"), main = "DIC")
+```
+
+### WAIC 
+
+```{r echo=FALSE}
+dotchart(c(ped1$waic$waic, ped2$waic$waic, ped3$waic$waic,
+           veh1$waic$waic, veh2$waic$waic, veh3$waic$waic,
+           both1$waic$waic, both2$waic$waic, both3$waic$waic),
+         labels = c("ped1", "ped2", "ped3", "veh1", "veh2", "veh3", "both1", "both2", "both3"), main = "WAIC")
+```
+
+## Best model
+
+### Summary 
+
+```{r echo=FALSE}
+summary(both3)
+autoplot(both3)
+```
+
+### Fitted values
+
+```{r echo=FALSE}
+both3_fit <- bind_cols(time = data$time, date = data$date, count = data$users_mac,
+                       fit = both3$summary.fitted.values$`0.5quant`,
+                       lci = both3$summary.fitted.values$`0.025quant`, 
+                       uci = both3$summary.fitted.values$`0.975quant`,
+                       difference = round(data$users_mac - both3$summary.fitted.values$`0.5quant`),
+                       difference_perc = round(((data$users_mac - both3$summary.fitted.values$`0.5quant`) / data$users_mac) *100, digits = 2)
+)
+
+ggplot(both3_fit, aes(x = date)) +
+  geom_line(aes(y = count), colour = "orange", alpha = 0.5) +
+  geom_line(aes(y = fit), col = "purple") +
+  geom_ribbon(aes(ymin = lci, ymax = uci), alpha = 0.3) +
+  theme_minimal() + xlab("") 
+
+both3_fit %>% 
+  filter(time >= 10080) %>% 
+  ggplot(aes(x = date)) +
+  geom_line(aes(y = count, colour = "orange"), alpha = 0.5) +
+  geom_line(aes(y = fit, colour = "purple")) +
+  geom_ribbon(aes(ymin = lci, ymax = uci), alpha = 0.3) +
+  scale_colour_manual(values = c("orange", "purple"),
+                      name = "Data", labels = c("Counts", "Prediction (2h) \n(with 95% CI)")) + 
+  theme_minimal() + 
+  labs(title = 'Wi-Fi users on campus - counts versus prediction', x = '', y = 'Users / prediction')
+```
+
+### Differences across day
+
+```{r echo=FALSE}
+both3_fit %>% 
+  filter(time >= 10080) %>%
+  ggplot(aes(x = date)) +
+  geom_line(aes(y = difference), colour = "orange") +
+  annotate("rect", fill = "grey", alpha = 0.4, 
+           xmin = ymd_hms("2019-03-18 09:00:00", tz = "Australia/Brisbane"),
+           xmax = ymd_hms("2019-03-18 17:00:00", tz = "Australia/Brisbane"),
+           ymin = -Inf, ymax = Inf) +
+  annotate("rect", fill = "grey", alpha = 0.4, 
+           xmin = ymd_hms("2019-03-19 09:00:00", tz = "Australia/Brisbane"),
+           xmax = ymd_hms("2019-03-19 17:00:00", tz = "Australia/Brisbane"),
+           ymin = -Inf, ymax = Inf) +
+  annotate("rect", fill = "grey", alpha = 0.4, 
+           xmin = ymd_hms("2019-03-20 09:00:00", tz = "Australia/Brisbane"),
+           xmax = ymd_hms("2019-03-20 17:00:00", tz = "Australia/Brisbane"),
+           ymin = -Inf, ymax = Inf) +
+  annotate("rect", fill = "grey", alpha = 0.4, 
+           xmin = ymd_hms("2019-03-21 09:00:00", tz = "Australia/Brisbane"),
+           xmax = ymd_hms("2019-03-21 17:00:00", tz = "Australia/Brisbane"),
+           ymin = -Inf, ymax = Inf) +
+  annotate("rect", fill = "grey", alpha = 0.4, 
+           xmin = ymd_hms("2019-03-22 09:00:00", tz = "Australia/Brisbane"),
+           xmax = ymd_hms("2019-03-22 17:00:00", tz = "Australia/Brisbane"),
+           ymin = -Inf, ymax = Inf) +
+  theme_minimal() + labs(title = 'Wi-Fi users on campus - counts versus prediction', x = '', y = 'Difference')
+```
+
+```{r echo=FALSE}
+both3_fit %>% 
+  filter(time >= 10080) %>%
+  ggplot(aes(x = date)) +
+  geom_line(aes(y = difference_perc), colour = "orange") +
+  annotate("rect", fill = "grey", alpha = 0.4, 
+           xmin = ymd_hms("2019-03-18 09:00:00", tz = "Australia/Brisbane"),
+           xmax = ymd_hms("2019-03-18 17:00:00", tz = "Australia/Brisbane"),
+           ymin = -Inf, ymax = Inf) +
+  annotate("rect", fill = "grey", alpha = 0.4, 
+           xmin = ymd_hms("2019-03-19 09:00:00", tz = "Australia/Brisbane"),
+           xmax = ymd_hms("2019-03-19 17:00:00", tz = "Australia/Brisbane"),
+           ymin = -Inf, ymax = Inf) +
+  annotate("rect", fill = "grey", alpha = 0.4, 
+           xmin = ymd_hms("2019-03-20 09:00:00", tz = "Australia/Brisbane"),
+           xmax = ymd_hms("2019-03-20 17:00:00", tz = "Australia/Brisbane"),
+           ymin = -Inf, ymax = Inf) +
+  annotate("rect", fill = "grey", alpha = 0.4, 
+           xmin = ymd_hms("2019-03-21 09:00:00", tz = "Australia/Brisbane"),
+           xmax = ymd_hms("2019-03-21 17:00:00", tz = "Australia/Brisbane"),
+           ymin = -Inf, ymax = Inf) +
+  annotate("rect", fill = "grey", alpha = 0.4, 
+           xmin = ymd_hms("2019-03-22 09:00:00", tz = "Australia/Brisbane"),
+           xmax = ymd_hms("2019-03-22 17:00:00", tz = "Australia/Brisbane"),
+           ymin = -Inf, ymax = Inf) +
+  theme_minimal() + labs(title = 'Wi-Fi users on campus - counts versus prediction', x = '', y = '% difference')
+```
+
+# Prediction
+
+Using data since `2019-02-25 00:00:00` to `2019-03-18 00:00:00` we train the model and start predicting number of users in the next two hours. Progressively when new data become available, they are included and yet again new model is fitted with further projection horizon. Prediction is run for one week.
+
+
+```{r include=FALSE}
+# data starting 2019-02-25 00:00:00
+# it's 8064 in numerical time
+# prediction starting 2019-03-18 00:00:00	
+# it's 10080 in numerical time
+
+horizon <- 8
+
+start <- 10080
+end <- max(data$time) - horizon
+
+for (i in start:end) {
+  
+  print(paste("Started: ", Sys.time()))
+  
+  data_pred <- data %>% 
+    filter(date >= ymd_hms("2019-02-25 00:00:00", tz = "Australia/Brisbane")) %>% 
+    # mutate(users_mac_pred = ifelse(time >= i, NA, users_mac)) %>% 
+    mutate(users_mac_pred = ifelse(date >= ymd_hms("2019-03-18 00:00:00", tz = "Australia/Brisbane"), 
+                                   NA, users_mac)) %>% 
+    filter(time < i + horizon)
+  
+  mod <- inla(users_mac_pred ~ 
+                weekday +
+                f(veh_stock, model = "rw1", scale.model = TRUE, hyper = hyper.prec) + 
+                f(ped_stock, model = "rw1", scale.model = TRUE, hyper = hyper.prec),
+              family = "nbinomial", 
+              control.compute = list(dic= TRUE, waic = TRUE),  
+              control.predictor = list(link = 1),
+              # control.inla = list(int.strategy="grid", strategy = "laplace", npoints = 21),
+              data = data_pred)
+  
+  mod_fit <- bind_cols(time = data_pred$time, date = data_pred$date, count = data_pred$users_mac,
+                       fit = mod$summary.fitted.values$`0.5quant`,
+                       lci = mod$summary.fitted.values$`0.025quant`, 
+                       uci = mod$summary.fitted.values$`0.975quant`,
+                       difference = round(data_pred$users_mac - mod$summary.fitted.values$`0.5quant`),
+                       difference_perc = round(((data_pred$users_mac - mod$summary.fitted.values$`0.5quant`) / data_pred$users_mac) *100, digits = 2)) %>% 
+    mutate(pred = ifelse(time >= i, 1, 0)) %>% filter(pred == 1) %>% dplyr::select(-pred) %>% 
+    mutate(difference_mean = round(mean(difference)),
+           difference_perc_mean = round(abs(mean(difference_perc)))) %>% 
+    mutate(frame = i - (start-1))
+  
+  if (i == 10080){
+    result <- mod_fit
+  } else {
+    result <- bind_rows(result, mod_fit)
+    rm(mod_fit)
+  }
+  
+  print(paste(Sys.time(), "Done time:", i))
+}
+
+```
+
+```{r include=FALSE}
+annotations <- result %>% 
+  dplyr::select(date, frame, difference_mean, difference_perc_mean, frame) %>% 
+  group_by(frame) %>% 
+  filter(row_number() == 1) %>% 
+  ungroup() %>% 
+  mutate(text = paste0("Mean counts - pred: ", difference_mean, " (abs. ", difference_perc_mean, "%)"))
+
+```
+
+## Example of single 'frame'
+
+```{r echo=FALSE}
+frame_select <- 1
+
+temp <- filter(result, frame == frame_select)
+
+ggplot(temp) +
+  geom_line(aes(x = date, y = count, group = frame, colour = "orange"), 
+            size = 1.5, alpha = 0.5, show.legend = TRUE) +
+  geom_line(aes(x = date, y = fit, group = frame, col = "purple"), 
+            size = 1.5, show.legend = TRUE) +
+  geom_ribbon(aes(x = date, ymin = lci, ymax = uci, group = frame), 
+              alpha = 0.3) +
+  geom_text(data = filter(annotations, frame == frame_select), 
+            aes(x = min(temp$date), 
+                y = Inf, hjust = 0, vjust = 1.5, size = 14, label = text), 
+            show.legend = FALSE) +
+  scale_colour_manual(values = c("orange", "purple"),
+                      name = "Data", labels = c("Counts", "Prediction (2h)")) + 
+  guides(size = "none") +
+  theme_light(base_size = 18) + 
+  labs(title = 'Wi-Fi users on campus', x = '', y = 'Counts / prediction')
+```
+
+```{r echo=FALSE}
+frame_select <- 24
+
+temp <- filter(result, frame == frame_select)
+
+ggplot(temp) +
+  geom_line(aes(x = date, y = count, group = frame, colour = "orange"), 
+            size = 1.5, alpha = 0.5, show.legend = TRUE) +
+  geom_line(aes(x = date, y = fit, group = frame, col = "purple"), 
+            size = 1.5, show.legend = TRUE) +
+  geom_ribbon(aes(x = date, ymin = lci, ymax = uci, group = frame), 
+              alpha = 0.3) +
+  geom_text(data = filter(annotations, frame == frame_select), 
+            aes(x = min(temp$date), 
+                y = Inf, hjust = 0, vjust = 1.5, size = 14, label = text), 
+            show.legend = FALSE) +
+  scale_colour_manual(values = c("orange", "purple"),
+                      name = "Data", labels = c("Counts", "Prediction (2h)")) + 
+  guides(size = "none") +
+  theme_light(base_size = 18) + 
+  labs(title = 'Wi-Fi users on the campus', x = '', y = 'Counts / prediction')
+```
+
+
+## Animating week
+
+```{r}
+prediction_animate_09 <- ggplot(result) +
+  geom_line(data = filter(data, date >= ymd_hms("2019-03-18 00:00:00", tz = "Australia/Brisbane")),
+            aes(x = date, y = users_mac, colour = "orange"),
+            size = 1, alpha = 0.5, show.legend = TRUE) +
+  geom_line(aes(x = date, y = fit, group = frame, col = "purple"), 
+            size = 1.5, alpha = 0.5, show.legend = TRUE) +
+  geom_ribbon(aes(x = date, ymin = lci, ymax = uci, group = frame), 
+              alpha = 0.2) +
+  geom_text(data = annotations,
+            aes(x = ymd_hms("2019-03-18 00:00:00", tz = "Australia/Brisbane"),
+                y = Inf, hjust = 0, vjust = 1.5, size = 14, label = text), 
+            show.legend = FALSE) +
+  scale_colour_manual(values = c("orange", "purple"),
+                      name = "Data", labels = c("Counts", "Prediction")) + 
+  guides(size = "none") +
+  theme_light(base_size = 18) + 
+  labs(title = 'Wi-Fi users on the campus', x = '', y = 'Counts / prediction') +
+  coord_cartesian(ylim = c(0, 30000)) +
+  transition_states(frame) +
+  ease_aes('linear')
+
+animate(prediction_animate_09, nframes = 2*max(result$frame), height = 600, width = 900)
+anim_save("animations/wifi_prediction_animate_09.gif")
+
+```
+
+## Temporal distribution of differences 
+
+### Absolute
+
+```{r}
+ggplot(annotations) +
+  annotate("rect", fill = "grey", alpha = 0.4, 
+           xmin = ymd_hms("2019-03-18 09:00:00", tz = "Australia/Brisbane"),
+           xmax = ymd_hms("2019-03-18 17:00:00", tz = "Australia/Brisbane"),
+           ymin = -Inf, ymax = Inf) +
+  annotate("rect", fill = "grey", alpha = 0.4, 
+           xmin = ymd_hms("2019-03-19 09:00:00", tz = "Australia/Brisbane"),
+           xmax = ymd_hms("2019-03-19 17:00:00", tz = "Australia/Brisbane"),
+           ymin = -Inf, ymax = Inf) +
+  annotate("rect", fill = "grey", alpha = 0.4, 
+           xmin = ymd_hms("2019-03-20 09:00:00", tz = "Australia/Brisbane"),
+           xmax = ymd_hms("2019-03-20 17:00:00", tz = "Australia/Brisbane"),
+           ymin = -Inf, ymax = Inf) +
+  annotate("rect", fill = "grey", alpha = 0.4, 
+           xmin = ymd_hms("2019-03-21 09:00:00", tz = "Australia/Brisbane"),
+           xmax = ymd_hms("2019-03-21 17:00:00", tz = "Australia/Brisbane"),
+           ymin = -Inf, ymax = Inf) +
+  annotate("rect", fill = "grey", alpha = 0.4, 
+           xmin = ymd_hms("2019-03-22 09:00:00", tz = "Australia/Brisbane"),
+           xmax = ymd_hms("2019-03-22 17:00:00", tz = "Australia/Brisbane"),
+           ymin = -Inf, ymax = Inf) +
+  geom_col(aes(x= date, y = difference_mean), colour = "purple", alpha = 0.8) +
+  theme_light(base_size = 18) + 
+  labs(title = 'Wi-Fi users on the campus', x = '', y = 'Mean counts - prediction')
+
+```
+
+### Relative
+
+```{r}
+ggplot(annotations) +
+  annotate("rect", fill = "grey", alpha = 0.4, 
+           xmin = ymd_hms("2019-03-18 09:00:00", tz = "Australia/Brisbane"),
+           xmax = ymd_hms("2019-03-18 17:00:00", tz = "Australia/Brisbane"),
+           ymin = -Inf, ymax = Inf) +
+  annotate("rect", fill = "grey", alpha = 0.4, 
+           xmin = ymd_hms("2019-03-19 09:00:00", tz = "Australia/Brisbane"),
+           xmax = ymd_hms("2019-03-19 17:00:00", tz = "Australia/Brisbane"),
+           ymin = -Inf, ymax = Inf) +
+  annotate("rect", fill = "grey", alpha = 0.4, 
+           xmin = ymd_hms("2019-03-20 09:00:00", tz = "Australia/Brisbane"),
+           xmax = ymd_hms("2019-03-20 17:00:00", tz = "Australia/Brisbane"),
+           ymin = -Inf, ymax = Inf) +
+  annotate("rect", fill = "grey", alpha = 0.4, 
+           xmin = ymd_hms("2019-03-21 09:00:00", tz = "Australia/Brisbane"),
+           xmax = ymd_hms("2019-03-21 17:00:00", tz = "Australia/Brisbane"),
+           ymin = -Inf, ymax = Inf) +
+  annotate("rect", fill = "grey", alpha = 0.4, 
+           xmin = ymd_hms("2019-03-22 09:00:00", tz = "Australia/Brisbane"),
+           xmax = ymd_hms("2019-03-22 17:00:00", tz = "Australia/Brisbane"),
+           ymin = -Inf, ymax = Inf) +
+  geom_col(aes(x= date, y = difference_perc_mean), colour = "purple", alpha = 0.8) +
+  theme_light(base_size = 18) + 
+  labs(title = 'Wi-Fi users on the campus', x = '', y = 'Mean counts - prediction (abs. %)')
+```
+

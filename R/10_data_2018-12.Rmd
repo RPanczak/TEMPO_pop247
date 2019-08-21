@@ -1,0 +1,800 @@
+---
+title: "POP247 - data catalogue"
+subtitle: "Pilot for St Lucia campus Oct 2018 - Jan 2019"
+author: "Radoslaw Panczak"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+mainfont: DejaVu Sans
+output: 
+  html_document: 
+    highlight: pygments
+    number_sections: yes
+    theme: united
+    toc: yes
+    toc_depth: 4
+    toc_float: yes
+---
+
+<!-- ------------------------------------------------------------ --> 
+<!-- ------------------------------------------------------------ --> 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = TRUE, fig.width=8, fig.height=6, dpi=300, out.width="800px", out.height="600px")
+
+# knitr::opts_knit$set(root.dir = 'R:/POP247-Q0786/')
+# setwd('R:/POP247-Q0786/')
+
+set.seed(12345)
+options(scipen = 999)
+
+library(pacman) 
+p_load(tidyverse, fs, here, readxl, magrittr, anytime, lubridate, sugrrants, 
+       naniar, janitor, kableExtra, sjmisc, scales,
+       sf, readabs, tmap, tmaptools,
+       twitteR)
+
+tmap_mode("view") # makes map interactive
+
+campus_sf <- st_read(here::here("data", "geo", "MB_2016_QLD_campus.shp"), quiet = TRUE) %>% 
+    st_transform(3112) 
+
+# campus_sp <- readOGR(here::here("data", "geo", "MB_2016_QLD_campus.shp"))
+# campus_sp <- spTransform(campus_sp, CRS("+init=epsg:4326"))
+```
+
+# Time 
+
+Monday `2018-12-03 00:00:00` to Sunday `2019-03-24 23:59:59` is the period where availability of data sources is highest.
+
+# Location
+
+Pilot will be constrained to mesh block `r as.character(campus_sf$MB_CODE16)` (same as SA1 `r as.character(campus_sf$SA1_MAIN16)`)
+
+```{r}
+tm_shape(campus_sf) +
+  tm_polygons(col = "purple", alpha = 0.5, lwd = 0)
+```
+
+Some official stats might be only available on SA2 level (`r as.character(campus_sf$SA2_MAIN16)` area `r as.character(campus_sf$SA2_NAME16)`)? But that will be problematic since it includes non-campus part of St Lucia.
+
+# Census
+
+## Resident pop (ERP)
+
+Estimated at **2,153** people for SA1 (place of usual residence)
+
+## Working pop
+
+Destination Zones (DZN) geography code: 310961711 (equivalent to SA1?).
+
+Estimated population **8,695** (place of work).
+
+These can be disaggregated by place of origin (DZN or SA2 and above)
+
+Both resident and working pops can come split by characteristics covered in the census. 
+
+# Nightime pop
+
+From the Aug '16 UQ survey: 
+
+> Collating information from the websites of each of the 10 residential colleges and Unilodge yielded a resident population of **2,747** for the St Lucia Campus as of August 2016. It is assumed that the resident population represents the overnight population of the campus.
+
+# Cyclists & pedestrians
+
+Automatic & manual counts are available for Green Bridge. 
+
+## Data
+
+```{r eval=FALSE}
+green_bridge_15M <- read_excel("data/counters/raw/420_2019-03-25-11-00-05.xlsx", 
+                           col_types = c("date", "numeric", "numeric", 
+                                         "numeric", "numeric", "numeric", "numeric")) %>% 
+  clean_names() %>%
+  remove_empty(c("rows", "cols")) %>% 
+  select(-eleanor_schonell_bridge_cyclists_4g, -eleanor_schonell_bridge_pedestrians_4g) %>% 
+  rename(cyclists_inbound = eleanor_schonell_bridge_cyclists_4g_cyclists_towards_university,
+         cyclists_outbound = eleanor_schonell_bridge_cyclists_4g_cyclists_away_from_university,
+         pedestrians_inbound = eleanor_schonell_bridge_pedestrians_4g_cyclists_towards_university,
+         pedestrians_outbound = eleanor_schonell_bridge_cyclists_4g_pedestrians_away_from_university) %>% 
+  force_tz(date, tzone = "Australia/Brisbane") %>% 
+  gather(cyclists_inbound:pedestrians_outbound, key = "measure", value = "count") %>% 
+  separate(measure, c("type", "direction")) %>% 
+  mutate(site = "green_bridge") %>% 
+  select(date, type, site, direction, count)%>% 
+  filter(date >= lubridate::ymd_hm("2018-12-03 00:00", tz = "Australia/Brisbane")) %>% 
+  arrange(date, type, site, direction)
+
+saveRDS(green_bridge_15M, "data/counters/clean/green_bridge_15M.Rds")
+
+# 1h aggregation
+# green_bridge_15M$recorded_cat <- ymd_hms(cut(green_bridge_15M$date,
+#                                              breaks = seq(ymd_hms("2018-10-08 00:00:00", 
+#                                                                   tz = "Australia/Brisbane"), 
+#                                                           ymd_hms("2019-01-28 00:00:00", 
+#                                                                   tz = "Australia/Brisbane"), 
+#                                                           # as.difftime(15, units = "mins")),
+#                                                           as.difftime(1, units = "hours")),
+#                                              include.lowest = TRUE), tz = "Australia/Brisbane")
+# 
+# green_bridge_60M <- green_bridge_15M %>%
+#   group_by(recorded_cat, type, site, direction) %>%
+#   summarise(count = sum(count)) %>%
+#   ungroup() %>%
+#   rename(date = recorded_cat)
+# 
+# saveRDS(green_bridge_60M, "data/counters/clean/green_bridge_60M.Rds")
+
+```
+
+```{r}
+green_bridge <- readRDS("data/counters/clean/green_bridge_15M.Rds") 
+```
+
+15 minutes interval directional infrared counters for bikes and pedestrians (separately) from `r min(green_bridge$date)` to `r max(green_bridge$date)`. 
+
+```{r}
+slice(green_bridge, 1:8)
+```
+
+## Results
+
+Detailed example counts for week of `2018-12-03` across type and direction.
+
+```{r}
+green_bridge %>% 
+  filter(date >= ymd_hms("2018-12-03 00:00:00", tz = "Australia/Brisbane")) %>%
+  filter(date <= ymd_hms("2018-12-09 23:59:59", tz = "Australia/Brisbane")) %>%
+  ggplot(aes(x = date, y = count)) + 
+  geom_line(aes(group = interaction(type, direction), color = direction, linetype = type)) + 
+  scale_x_datetime() + theme_minimal() + 
+  xlab("") + ylab("Bike / pedestrian counts")
+
+```
+
+Overview of four months, cyclists, outbound
+
+```{r warning=FALSE}
+# library(tsibble)
+# 
+# green_bridge_tsbl <- green_bridge %>%
+#   select(-site) %>% 
+#   as_tsibble(library(sugrrants)
+
+#     key = c(type, direction), 
+#     index = date, 
+#     regular = TRUE
+#   )
+  
+
+# green_bridge %>%
+#   filter(direction == "inbound") %>% 
+#   rename(date_time = date) %>% 
+#   mutate(weekday = strftime(date_time, format = "%A"),
+#          weekend = if_else(weekday %in% c("Saturday", "Sunday"), "Weekend", "Weekday"),
+#          date = as.Date(date_time),
+#          time = as.numeric(format(date_time, "%H")) + as.numeric(format(date_time, "%M"))/60) %>% 
+#   ggplot(aes(x = time, y = count, colour = type)) +
+#   geom_line() +
+#   facet_calendar(~ date) + 
+#   theme(legend.position = "bottom")
+
+p <- green_bridge %>%
+  filter(direction == "outbound") %>%
+  filter(type == "cyclists") %>%
+  rename(date_time = date) %>% 
+  mutate(weekday = strftime(date_time, format = "%A", tz = "Australia/Brisbane"),
+         weekend = if_else(weekday %in% c("Saturday", "Sunday"), "Weekend", "Weekday"),
+         date = as.Date(date_time, tz = "Australia/Brisbane"),
+         time = as.numeric(format(date_time, "%H")) + as.numeric(format(date_time, "%M"))/60) %>%
+  frame_calendar(x = time, y = count, date = date) %>% 
+  ggplot(aes(x = .time, y = .count, group = date, colour = weekend)) +
+  geom_line() +
+  theme(legend.position = "none") + 
+  theme_minimal()
+
+prettify(p)
+```
+
+
+# Traffic volume at intersection
+
+## Locations
+
+Only three locations seem to be useful for the campus. One is from the busway so it might not be of much use. One might be too far from campus.
+
+```{r}
+intersect <- jsonlite::fromJSON(here::here("data", "BCC", "traffic", "raw", "locations",
+                                           "Intersection_locations_reference.json"), 
+                                flatten = TRUE) %>% 
+  select(tsc, coordinates.latLng.latitude, coordinates.latLng.longitude,
+         region, suburb) %>% 
+  filter(!is.na(coordinates.latLng.longitude) & !is.na(coordinates.latLng.latitude)) %>%
+  filter(tsc %in% c(8074, 878, 90)) %>%
+  st_as_sf(., coords = c("coordinates.latLng.longitude", "coordinates.latLng.latitude"), 
+           crs = 4326, agr = "constant")
+
+qtm(intersect)
+
+```
+
+## Data
+
+```{r eval=FALSE, warning=FALSE, include=FALSE}
+
+# note >> skip used to read file from 1st Dec!
+bcc_traffic_8074_2018_12_2019_01 <- 
+  read_table2("data/BCC/traffic_official/raw/B8074 15 Min Volumes Oct 18 to Jan 19.txt", 
+              col_names = c("time", paste0("v", 1:19)),
+              skip = 6225) %>% 
+  rename(d1 = v3, d2 = v4, d3 = v5, 
+         d4 = v6, d5 = v7, d6 = v8, 
+         d7 = v9, d8 = v10, d9 = v11) %>% 
+  mutate(date = ifelse(test = v2 == "December", yes = paste0("2018-12-", v1), no = NA)) %>% 
+  mutate(date = ifelse(test = v2 == "January", yes = paste0("2019-01-", v1), no = date)) %>% 
+  mutate(date = ifelse(test = v2 == "February", yes = paste0("2019-02-", v1), no = date)) %>% 
+  select(-v1, -v2, -v12, -v13, - v14, - v15, -v16, -v17, -v18, -v19) %>% 
+  fill(date) %>% 
+  filter(time != "Approach") %>% 
+  filter(grepl(":",time)) %>% 
+  mutate(recorded_15 = anytime(paste0(date, " ", time, ":00"), tz = "Australia/Brisbane") - 15*60) %>% 
+  select(recorded_15, everything(), - date, -time) %>% 
+  mutate(d1 = as.integer(d1),  d2 = as.integer(d2), d3 = as.integer(d3),
+         d4 = as.integer(d4), d5 = as.integer(d5), d6 = as.integer(d6),
+         d7 = as.integer(d7), d8 = as.integer(d8), d9 = as.integer(d9)) 
+
+saveRDS(bcc_traffic_8074_2018_12_2019_01, "data/BCC/traffic_official/clean/bcc_traffic_8074_2018_12_2019_01.Rds")
+
+bcc_traffic_8074_2019_02_2019_04 <- 
+  read_table2("data/BCC/traffic_official/raw/B8074 15 Min Volumes 1 Feb to 30 April 2019.txt", 
+              col_names = c("time", paste0("v", 1:19))) %>% 
+  rename(d1 = v3, d2 = v4, d3 = v5, 
+         d4 = v6, d5 = v7, d6 = v8, 
+         d7 = v9, d8 = v10, d9 = v11) %>% 
+  mutate(date = ifelse(test = v2 == "February", yes = paste0("2019-02-", v1), no = NA)) %>% 
+  mutate(date = ifelse(test = v2 == "March", yes = paste0("2019-03-", v1), no = date)) %>% 
+  mutate(date = ifelse(test = v2 == "April", yes = paste0("2019-04-", v1), no = date)) %>% 
+  select(-v1, -v2, -v12, -v13, - v14, - v15, -v16, -v17, -v18, -v19) %>% 
+  fill(date) %>% 
+  filter(time != "Approach") %>% 
+  filter(grepl(":",time)) %>% 
+  mutate(recorded_15 = anytime(paste0(date, " ", time, ":00"), tz = "Australia/Brisbane") - 15*60) %>% 
+  select(recorded_15, everything(), - date, -time) %>% 
+  mutate(d1 = as.integer(d1),  d2 = as.integer(d2), d3 = as.integer(d3),
+         d4 = as.integer(d4), d5 = as.integer(d5), d6 = as.integer(d6),
+         d7 = as.integer(d7), d8 = as.integer(d8), d9 = as.integer(d9)) 
+
+saveRDS(bcc_traffic_8074_2019_02_2019_04, "data/BCC/traffic_official/clean/bcc_traffic_8074_2019_02_2019_04.Rds")
+
+```
+
+
+```{r}
+bcc_traffic_8074_2018_12_2019_01 <- readRDS("data/BCC/traffic_official/clean/bcc_traffic_8074_2018_12_2019_01.Rds")
+bcc_traffic_8074_2019_02_2019_04 <- readRDS("data/BCC/traffic_official/clean/bcc_traffic_8074_2019_02_2019_04.Rds") 
+
+bcc_traffic_8074 <- bind_rows(bcc_traffic_8074_2018_12_2019_01, bcc_traffic_8074_2019_02_2019_04)
+
+saveRDS(bcc_traffic_8074, "data/BCC/traffic_official/clean/bcc_traffic_8074.Rds")
+
+rm(bcc_traffic_8074_2018_12_2019_01, bcc_traffic_8074_2019_02_2019_04)
+
+# # 15 min to 1h intervals as posix
+# bcc_traffic_8074$recorded_60 <- ymd_hms(cut(bcc_traffic_8074$recorded,
+#                                             breaks = seq(ymd_hms("2018-09-10 00:00:00", 
+#                                                                  tz = "Australia/Brisbane"), 
+#                                                          ymd_hms("2019-01-28 00:00:00", 
+#                                                                  tz = "Australia/Brisbane"), 
+#                                                          as.difftime(1, units = "hours")),
+#                                             include.lowest = TRUE), tz = "Australia/Brisbane")
+
+# intervals as character
+# bcc_traffic_8074$time_cat_str <- substr(as.character(bcc_traffic_8074$recorded_cat), 12, 16)
+```
+
+BCC data on traffic counts aggregated to 15 min buckets. `r nrow(bcc_traffic_8074)` datapoints for the `8074` intersection are available from `r min(bcc_traffic_8074$recorded_15)` to `r max(bcc_traffic_8074$recorded_15)`. Available variable refers to overall 'minimum volumes' and is recorded by 9 detectors. 
+
+```{r}
+bcc_traffic_8074 %>% 
+  slice(29:33)
+```
+
+## Results
+
+15 minute aggregates, example of all detectors for one day
+
+```{r}
+bcc_traffic_8074_long <- bcc_traffic_8074 %>% 
+  gather(code, mf, d1:d9) %>% 
+  filter(!code %in% c("d7", "d8", "d9")) %>% 
+  mutate(direction = case_when(
+    code == "d1" ~ "inbound",
+    code == "d2" ~ "inbound",
+    code == "d3" ~ "outbound",
+    code == "d4" ~ "outbound",
+    code == "d5" ~ "inbound",
+    code == "d6" ~ "inbound"
+  ))
+
+bcc_traffic_8074_long %>% 
+  filter(recorded_15 >= ymd_hms("2018-12-03 00:00:00", tz = "Australia/Brisbane") & 
+           recorded_15 <= ymd_hms("2018-12-03 23:59:59", tz = "Australia/Brisbane")) %>% 
+  ggplot(aes(x = recorded_15, y = mf, colour = code)) + 
+  geom_line() + 
+  scale_x_datetime() + theme_minimal() + 
+  xlab("") + ylab("Traffic volume") +
+  facet_wrap(~direction, ncol = 1)
+```
+
+Ignoring lines, one week
+
+```{r}
+bcc_traffic_agg_8074_long <- bcc_traffic_8074_long %>% 
+  group_by(recorded_15, direction) %>% 
+  summarise(mf = sum(mf, na.rm = TRUE)) %>% 
+  ungroup()
+
+bcc_traffic_agg_8074_long %>% 
+  filter(recorded_15 >= ymd_hms("2018-12-03 04:00:00", tz = "Australia/Brisbane") & 
+           recorded_15 <= ymd_hms("2018-12-09 23:59:59", tz = "Australia/Brisbane")) %>% 
+  ggplot(aes(x = recorded_15, y = mf)) + 
+  geom_col() +
+  scale_x_datetime() + theme_minimal() + 
+  xlab("") + ylab("Traffic volume") +
+  facet_wrap(~direction, ncol = 1)
+```
+
+Inbound traffic, complete dataset period
+
+```{r}
+p <- bcc_traffic_agg_8074_long %>% 
+  filter(direction == "inbound") %>%
+  rename(date_time = recorded_15) %>% 
+  mutate(weekday = strftime(date_time, format = "%A", tz = "Australia/Brisbane"),
+         weekend = if_else(weekday %in% c("Saturday", "Sunday"), "Weekend", "Weekday"),
+         date = as.Date(date_time, tz = "Australia/Brisbane"),
+         time = as.numeric(format(date_time, "%H")) + as.numeric(format(date_time, "%M"))/60) %>%
+  frame_calendar(x = time, y = mf, date = date) %>% 
+  ggplot(aes(x = .time, y = .mf, group = date, colour = weekend)) +
+  geom_line() +
+  theme(legend.position = "none") + 
+  theme_minimal()
+
+prettify(p)
+```
+
+## Limitations
+
+- Little is known how counts are calculated
+
+- There are some days in Dec with missing data. Days around might be affected too with partial data?
+
+```{r}
+bcc_traffic_8074_long %>% 
+  filter(recorded_15 >= ymd_hms("2018-12-04 00:00:00", tz = "Australia/Brisbane") & 
+           recorded_15 <= ymd_hms("2018-12-08 23:59:59", tz = "Australia/Brisbane")) %>% 
+  filter(!is.na(mf)) %>% 
+  mutate(date = as.Date(recorded_15, tz = "Australia/Brisbane")) %>% 
+  group_by(date) %>% 
+  summarise(observations = n()) %>% 
+  ungroup() %>% 
+  ggplot(aes(x = date, y = observations)) + 
+  geom_col() + 
+  scale_x_date() + theme_minimal() + 
+  xlab("") + ylab("Daily observations") 
+```
+
+
+# Twitter
+
+```{r eval=FALSE, include=FALSE}
+tweets_proc <- readRDS("./data/Twitter/clean/tweets_proc_2019_03_18.rds") %>% 
+  select(-source, -place_id, -place_country, -place_bounding_box, -place_url, 
+         -user_utc_offset, -user_time_zone, -user_geo_enabled,
+         -user_followers_count, -user_friends_count, -user_favourites_count, -user_created_at,
+         -timestamp_ms, -in_reply_to_status_id_str, -in_reply_to_user_id_str)
+
+tweets_geo <- tweets_proc %>% 
+  dplyr::filter(!is.na(lat)) %>% 
+  select(UID, everything()) %>% 
+  st_as_sf(coords = c("lon", "lat"), crs = 4326) %>% 
+  st_transform(3112) 
+
+campus_tweets_geo <- st_intersection(tweets_geo, campus_sf)
+
+saveRDS(campus_tweets_geo, here::here("data", "Twitter", "clean", "campus_tweets_geo.Rds"))
+
+campus_tweets_geo_agg <- campus_tweets_geo %>% 
+  mutate(temp = as.character(st_geometry(campus_tweets_geo))) %>% 
+  group_by(temp) %>% 
+  summarise(freq = n()) %>% 
+  select(-temp) %>% 
+  arrange(desc(freq))
+
+saveRDS(campus_tweets_geo_agg, here::here("data", "Twitter", "clean", "campus_tweets_geo_agg.Rds"))
+
+buildings <- c(
+  "Advanced Engineering Building (49)", 
+  "Sir Llew Edwards Building (14)", 
+  "Chamberlain Building (35)", 
+  "Hawken Engineering Building (50)", 
+  "Forgan Smith Building (1)", 
+  "Molecular Biosciences Building (76)", 
+  "Steele Building (3)", 
+  "Chemistry Building (68)", 
+  "Goddard Building (8)", 
+  "Prentice Building (42)", 
+  "Colin Clark Building (39)", 
+  "Don Nicklin Building (74)", 
+  "Joyce Ackroyd Building (37)", 
+  "Michie Building (9)", 
+  "Parnell Building (7)", 
+  "Priestley Building (67)", 
+  "Sir James Foots Building (47A)")
+
+campus_tweets_name_agg <- tweets_proc %>% 
+  dplyr::filter(is.na(lat)) %>% 
+  dplyr::filter(stringr::str_detect(place_full_name, "UQ") | 
+                  stringr::str_detect(place_full_name, "Uq") |
+                  stringr::str_detect(place_full_name, "University of Queensland") |
+                  place_full_name %in% buildings) %>% 
+  dplyr::filter(!stringr::str_detect(place_full_name, "Gatton")) %>% 
+  dplyr::filter(!stringr::str_detect(place_full_name, "UQ School of Dentistry")) %>% 
+  dplyr::filter(!stringr::str_detect(place_full_name, "UQ School of Medicine")) %>% 
+  dplyr::filter(!stringr::str_detect(place_full_name, "University of Queensland Centre for Clinical Research")) %>%
+  dplyr::filter(!stringr::str_detect(place_full_name, "UQ School Of Population Health")) %>% 
+  dplyr::filter(!stringr::str_detect(place_full_name, "UQ PACE Health Sciences Library")) %>% 
+  dplyr::filter(!stringr::str_detect(place_full_name, "UQ Executive Education")) %>% 
+  dplyr::group_by(place_full_name) %>% 
+  dplyr::summarise(freq = n()) %>% 
+  dplyr::arrange(desc(freq))
+
+saveRDS(campus_tweets_name_agg, here::here("data", "Twitter", "clean", "campus_tweets_name_agg.Rds"))
+
+campus_tweets_name <- tweets_proc %>% 
+  dplyr::filter(is.na(lat)) %>% 
+  dplyr::filter(stringr::str_detect(place_full_name, "UQ") | 
+                  stringr::str_detect(place_full_name, "Uq") |
+                  stringr::str_detect(place_full_name, "University of Queensland") |
+                  place_full_name %in% buildings) %>% 
+  dplyr::filter(!stringr::str_detect(place_full_name, "Gatton")) %>% 
+  dplyr::filter(!stringr::str_detect(place_full_name, "UQ School of Dentistry")) %>% 
+  dplyr::filter(!stringr::str_detect(place_full_name, "UQ School of Medicine")) %>% 
+  dplyr::filter(!stringr::str_detect(place_full_name, "University of Queensland Centre for Clinical Research")) %>%
+  dplyr::filter(!stringr::str_detect(place_full_name, "UQ School Of Population Health")) %>% 
+  dplyr::filter(!stringr::str_detect(place_full_name, "UQ PACE Health Sciences Library")) %>% 
+  dplyr::filter(!stringr::str_detect(place_full_name, "UQ Executive Education")) 
+
+saveRDS(campus_tweets_name, here::here("data", "Twitter", "clean", "campus_tweets_name.Rds"))
+
+# tweets of campus users, but posted outside campus
+campus_tweets_out <- bind_rows(select(campus_tweets_name, UID),
+                 st_drop_geometry(select(campus_tweets_geo, UID))) %>% 
+  unique() %>% 
+  left_join(tweets_proc) %>% 
+  anti_join(select(campus_tweets_geo, created_at, id_str)) %>% 
+  anti_join(select(campus_tweets_name, created_at, id_str))
+  
+saveRDS(campus_tweets_out, here::here("data", "Twitter", "clean", "campus_tweets_out.Rds"))
+
+campus_tweets_out_agg <- campus_tweets_out %>% 
+  dplyr::filter(!is.na(lat)) %>% 
+  group_by(lat, lon) %>% 
+  summarise(freq = n()) %>% 
+  arrange(desc(freq)) %>% 
+  st_as_sf(coords = c("lon", "lat"), crs = 4326) %>% 
+  st_transform(3112) 
+
+saveRDS(campus_tweets_out_agg, here::here("data", "Twitter", "clean", "campus_tweets_out_agg.Rds"))
+
+campus_tweets_out_name_agg <- campus_tweets_out %>% 
+  dplyr::filter(is.na(lat)) %>% 
+  group_by(place_full_name) %>% 
+  summarise(freq = n()) %>% 
+  arrange(desc(freq))
+
+saveRDS(campus_tweets_out_name_agg, here::here("data", "Twitter", "clean", "campus_tweets_out_name_agg.Rds"))
+
+rm(tweets_geo, tweets_proc, UID)
+gc()
+```
+
+```{r}
+campus_tweets_geo <- readRDS(here::here("data", "Twitter", "clean", "campus_tweets_geo.Rds"))
+campus_tweets_geo_agg <- readRDS(here::here("data", "Twitter", "clean", "campus_tweets_geo_agg.Rds"))
+
+campus_tweets_name_agg <- readRDS(here::here("data", "Twitter", "clean", "campus_tweets_name_agg.Rds"))
+campus_tweets_name <- readRDS(here::here("data", "Twitter", "clean", "campus_tweets_name.Rds"))
+
+campus_tweets_out <- readRDS(here::here("data", "Twitter", "clean", "campus_tweets_out.Rds"))
+campus_tweets_out_agg <- readRDS(here::here("data", "Twitter", "clean", "campus_tweets_out_agg.Rds"))
+campus_tweets_out_name_agg <- readRDS(here::here("data", "Twitter", "clean", "campus_tweets_out_name_agg.Rds"))
+
+```
+
+## Geocoded data
+
+There are `r nrow(campus_tweets_geo)` geolocated tweets in `r length(unique(campus_tweets_geo$geometry))` distinct locations over campus collected between `r min(campus_tweets_geo$created_at)` and `r max(campus_tweets_geo$created_at)`
+
+```{r}
+campus_tweets_geo_agg %>% 
+  tm_shape() +
+  tm_bubbles("freq", col = "orange") 
+```
+
+## Location data
+
+Additionally, it is also possible to include tweets without coordinates with names suggesting location on St Lucia campus. Following `place_full_name` were used:
+
+```{r, results='asis'}
+campus_tweets_name_agg %>% 
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F)
+```
+
+That added additional `r nrow(campus_tweets_name)` tweets.
+
+```{r include=FALSE}
+campus_tweets <- campus_tweets_geo %>% 
+  select(-starts_with("GCC")) %>% 
+  select(-starts_with("STE")) %>% 
+  select(-starts_with("MB")) %>% 
+  select(-starts_with("SA")) %>% 
+  select(-`AREASQKM16`) %>% 
+  st_drop_geometry() %>% 
+  bind_rows(select(campus_tweets_name, -lon, -lat)) %>% 
+  select(-geo_lat, -geo_lon, -orig_lat, -orig_lon) 
+
+campus_tweets$created_at_tz = with_tz(campus_tweets$created_at, tzone = "Australia/Brisbane")
+
+campus_tweets %<>% 
+  mutate(created_at_hod = as.numeric(format(created_at_tz, "%H"))) %>%
+  mutate(created_at_hod_notz = as.numeric(format(created_at, "%H"))) 
+
+# ggplot(campus_tweets, aes(created_at_hod_notz)) + 
+#   geom_bar() 
+# 
+# ggplot(campus_tweets, aes(created_at_hod)) + 
+#   geom_bar() 
+
+campus_tweets %<>% 
+  select(-created_at_hod_notz, -created_at_hod, -created_at) %>% 
+  select(UID, created_at_tz, everything())
+
+saveRDS(campus_tweets, here::here("data", "Twitter", "clean", "campus_tweets.Rds"))
+
+rm(campus_tweets_geo, campus_tweets_geo_agg, campus_tweets_name_agg, campus_tweets_name)
+gc()
+```
+
+
+## Combined data
+
+There are `r nrow(campus_tweets)` tweets from `r length(unique(campus_tweets$user_id_str))` users 
+available on campus between `r min(campus_tweets$created_at_tz)` and `r max(campus_tweets$created_at_tz)`.
+
+```{r}
+slice(campus_tweets, 1:5)
+```
+
+## Results
+
+Example of hourly aggregates for the whole campus:
+
+```{r}
+campus_tweets %>% 
+  mutate(hod = strftime(created_at_tz, format="%H")) %>% 
+  ggplot(., aes(x = hod)) + 
+  geom_bar() + theme_minimal() + xlab("Hour of the day") + ylab("Number of tweets")
+```
+
+## Tweets of campus users posted outside campus
+
+There are additional `r nrow(campus_tweets_out)` Tweets of users that posted at least once while on campus, that are located outside of it. Again some with precise location and some without.
+
+### Geocoded
+
+```{r}
+campus_tweets_out_agg %>% 
+  tm_shape() +
+  tm_bubbles("freq", col = "orange") 
+```
+
+### Place name
+
+```{r}
+campus_tweets_out_name_agg %>% 
+  slice(1:10)
+```
+
+## Limitations
+
+- data would need some cleaning
+
+
+# Google places
+
+## Locations
+
+```{r, include=FALSE}
+# scrape_dates.0 sems to be the same as detail_collection_dates.0
+places <- read_csv("./data/google_places/raw/export0.csv") %>% 
+  dplyr::select(-detail_data.0.url, -detail_data.0.website, -detail_data.0.formatted_phone_number, 
+                -detail_data.0.rating, -starts_with("detail_data.0.reviews"), 
+                -starts_with("asgs"), -detail_collection_dates.0)  %>%
+  dplyr::filter(!is.na(geometry.location.lat)) %>% 
+  st_as_sf(coords = c("geometry.location.lng", "geometry.location.lat"), crs = 4326) %>% 
+  st_transform(3112) 
+
+campus_places <- st_intersection(places, select(campus_sf, geometry))
+
+campus_extra <- places %>% 
+  filter(name %in% c("QRIScloud", "UQ St Lucia ferry terminal, St Lucia", "Eleanor Schonell Bridge"))
+
+campus_places <- do.call(rbind, list(campus_places, campus_extra))
+
+rm(places, campus_extra)
+
+# percentage complete
+campus_places$popular_filled <- rowSums(!is.na(dplyr::select(campus_places, scrape_data.0.popular_times.0:scrape_data.0.popular_times.167) )) - 1 # -1 is for the geom!
+
+campus_places_times <- campus_places %>% 
+  filter(popular_filled > 0) %>% 
+  filter(place_id != "ChIJ-bBD4H5akWsRbvVTi-CIZtQ") # Brisbane Christian Church
+
+campus_places %<>% 
+  filter(popular_filled == 0) %>% 
+  select(-contains("scrape_data.0.popular_times."))
+
+saveRDS(campus_places_times, 
+        here::here("data", "google_places", "clean", "campus_places_times.Rds"))
+```
+
+Google Places dataset contains data for popularity of places scraped from Google Maps between `r min(campus_places$scrape_dates.0)` and `r max(campus_places$scrape_dates.0)`. Popularity is an arbitrary measure of 0-100 for each hour of each day of the week:
+
+![](images/popularity_regular.PNG)
+
+There are `r nrow(campus_places_times) + nrow(campus_places)` places on teh campus, however only `r nrow(campus_places_times)` have any information about popularity: 
+
+```{r}
+rm(campus_places)
+gc()
+
+qtm(campus_places_times, text = "name")
+```
+
+## Data
+
+There are 7 days with 24 hours of popularity so max of popular times is `r 7*24`. 
+
+```{r}
+campus_places_times %>% 
+  filter(is.na(`scrape_data.0.popular_times.1`)) %>% 
+  select(name, `types.0`, `scrape_data.0.popular_times.1`, `scrape_data.0.popular_times.2`) %>%   slice(1:5)
+```
+
+## Results
+
+Distribution of popular times availability is:
+
+```{r}
+summary(campus_places_times$popular_filled)
+```
+
+Distribution of popular times per 7*24 period:
+
+```{r, warning=FALSE}
+# 'time' for popularity is number in 0 - 167 range
+campus_places_times_long <- campus_places_times %>% 
+  st_drop_geometry() %>% 
+  select(-starts_with("type"), -place_id, -popular_filled, -scrape_dates.0) %>% 
+  tidyr::gather(time, popularity, scrape_data.0.popular_times.0:scrape_data.0.popular_times.167) %>% 
+  mutate(time = as.numeric(gsub("scrape_data.0.popular_times.", "", time))) %>% 
+  mutate(dow = cut(time, breaks = seq(0, 168, by = 24), labels = FALSE, right = FALSE)) %>% 
+  mutate(tod = time - ((dow -1) * 24)) %>% 
+  arrange(name, time) 
+
+saveRDS(campus_places_times_long, 
+        here::here("data", "google_places", "clean", "campus_places_times_long.Rds"))
+
+ggplot(campus_places_times_long, aes(time, popularity, group = name)) +
+  geom_line() + 
+  theme_minimal() + xlab("Hour of the day (over week") + ylab("Popularity")
+  
+```
+
+## Limitations
+
+- no real dates, so no Aug '16 coverage
+- it's all about popularity - so no real population measures for places - derive/find out/guestimate?
+- complete black box methodology
+
+
+# Weather
+
+
+```{r eval=FALSE, include=FALSE}
+## Daily averages
+
+# Daily data from NOAA for max temperature and rain are available for longer study period. 
+
+NOAA <- read_csv("data/NOAA/raw/1655130.csv")
+
+NOAA %>% 
+  ggplot(aes(x=DATE, y=TMAX)) +
+  geom_line() + theme_minimal() + 
+  scale_x_date() +
+  xlab("") + ylab("Temperature max")
+
+NOAA %>% 
+  ggplot(aes(x=DATE, y=PRCP)) +
+  geom_col() + theme_minimal() + 
+  scale_x_date() +
+  xlab("") + ylab("Rain [mm]") 
+```
+
+From `uqweather` station (http://ww2.sees.uq.edu.au/uqweather/). 
+
+```{r}
+files <- dir("./data/uqweather/raw/", recursive = TRUE, full.names = TRUE, pattern = "\\.csv$")
+
+uqweather <-  lapply(files, read_csv, 
+                     col_types = cols(Timestamp = col_datetime(format = "%Y/%m/%d %H:%M:%S"))) %>% 
+  bind_rows() %>% 
+  clean_names()
+  
+rm(files)
+gc()
+
+saveRDS(uqweather, here::here("data", "uqweather", "clean", "uqweather.Rds"))
+```
+
+```{r}
+uqweather <- readRDS(here::here("data", "uqweather", "clean", "uqweather.Rds")) %>% 
+  mutate(timestamp = force_tz(timestamp, tzone = "Australia/Brisbane")) %>% 
+    filter(timestamp >= ymd_hms("2018-10-08 00:00:00", tz = "Australia/Brisbane") & 
+           timestamp <= ymd_hms("2019-03-24 23:59:59", tz = "Australia/Brisbane")) 
+
+# attr(uqweather$timestamp,"tzone")
+```
+
+## Temp 
+
+Example from one day:
+
+```{r}
+uqweather %>% 
+    filter(timestamp >= ymd_hms("2018-10-08 00:00:00", tz = "Australia/Brisbane") & 
+           timestamp <= ymd_hms("2018-10-08 23:59:59", tz = "Australia/Brisbane")) %>% 
+  ggplot(aes(x=timestamp, y=temp_mean_deg)) +
+  scale_x_datetime() +
+  geom_line() + theme_minimal() + 
+  geom_smooth(se = FALSE) +
+  xlab("") + ylab("Temperature")
+```
+
+## Rain  
+
+Daily accumulated from the whole period:
+
+```{r}
+uqweather %>% 
+  mutate(date = as.Date(timestamp)) %>% 
+  group_by(date) %>% 
+  summarise(rain_acc_mm = max(rain_acc_mm)) %>% 
+  ggplot(aes(x=date, y=rain_acc_mm)) +
+  scale_x_date() +
+  geom_col() + theme_minimal() + 
+  xlab("") + ylab("Rain acc daily [mm]") 
+```
+
+Intensity:
+
+```{r}
+uqweather %>% 
+  ggplot(aes(x=timestamp, y=rain_intensity_mm_h)) +
+  scale_x_datetime() +
+  geom_line() + theme_minimal() + 
+  xlab("") + ylab("Rain intensity [mm/h]")
+```
+
+
+

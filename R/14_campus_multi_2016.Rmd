@@ -1,0 +1,737 @@
+---
+title: "POP247 - campus EDA"
+subtitle: "Models for St Lucia - sites & modes of transport"
+# author: "Radoslaw Panczak"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+mainfont: DejaVu Sans
+output: 
+  html_document: 
+    # css: custom.css
+    toc: true
+    toc_depth: 4
+    toc_float: true
+    number_sections: true
+    theme: united 
+    highlight: pygments 
+---
+
+<!-- ------------------------------------------------------------ --> 
+<!-- ------------------------------------------------------------ --> 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, 
+                      fig.width=8, fig.height=6, dpi=300, 
+                      out.width="800px", out.height="600px",
+                      cache=TRUE)
+
+# knitr::opts_knit$set(root.dir = 'R:/POP247-Q0786/')
+# setwd('R:/POP247-Q0786/')
+
+set.seed(12345)
+options(scipen = 999)
+
+library(pacman) 
+p_load(tidyverse, magrittr, lubridate,
+       scales, gghighlight, fitdistrplus, MASS, mgcv, gratia, INLA, INLAutils)
+
+inla.setOption(num.threads = 3) 
+```
+
+# People counts
+
+```{r echo=FALSE}
+campus_site_mode <- readRDS("data/counters/clean/uq_campus_long_mode.Rds") %>% 
+  filter(  date >= ymd_hms("2016-08-15 00:00:00", tz = "Australia/Brisbane") & 
+             date <= ymd_hms("2016-08-21 23:59:59", tz = "Australia/Brisbane"))
+
+# table(campus_site_mode$direction)
+# table(campus_site_mode$site, campus_site_mode$type)
+# table(as.Date(campus_site_mode$date, tz = "Australia/Brisbane"))
+
+campus_inbound <- bind_cols(date = rep(seq(ymd_hms("2016-08-15 00:00:00", 
+                                                   tz = "Australia/Brisbane"), 
+                                           ymd_hms("2016-08-21 23:59:00", 
+                                                   tz = "Australia/Brisbane"), 
+                                           as.difftime(15, units = "mins")), 9),
+                            site = c(rep("Chancellors", 672), rep("ferry", 672),
+                                     rep("green_bridge", 672), rep("green_bridge", 672),
+                                     rep("lakes", 672), rep("Macquarie", 672),
+                                     rep("McGregor", 672), rep("Schonell", 672), 
+                                     rep("uq", 672)),
+                            type = c(c(rep("vehicles", 672), rep("public_transport", 672),
+                                       rep("cyclists", 672), rep("pedestrians", 672),
+                                       rep("public_transport", 672), rep("cyclists", 672),
+                                       rep("vehicles", 672), rep("vehicles", 672), 
+                                       rep("public_transport", 672)))
+) %>% 
+  left_join(filter(campus_site_mode, direction == "inbound")) %>% 
+  dplyr::select(-direction) %>%
+  mutate(direction = "inbound") %>% 
+  mutate(count = ifelse(is.na(count), 0, count)) %>% 
+  mutate(time = as.numeric(date - min(campus_site_mode$date)) / 900) %>% 
+  mutate(hod = as.numeric(strftime(date, "%H", tz = ""))) %>% 
+  mutate(dow = as.numeric(strftime(date, "%d", tz = "")) - 14) %>% 
+  mutate(wknd = ifelse(test = dow >=6 & dow <= 7, yes = 1, no = 0)) %>% 
+  arrange(site, date)
+
+# table(campus_site_mode$site, campus_site_mode$type)
+# table(campus_inbound$site, campus_inbound$type)
+# 
+# table(as.Date(campus_site_mode$date, tz = "Australia/Brisbane"))
+# table(as.Date(campus_inbound$date, tz = "Australia/Brisbane"))
+
+campus_outbound <- bind_cols(date = rep(seq(ymd_hms("2016-08-15 00:00:00", 
+                                                    tz = "Australia/Brisbane"), 
+                                            ymd_hms("2016-08-21 23:59:00", 
+                                                    tz = "Australia/Brisbane"), 
+                                            as.difftime(15, units = "mins")), 9),
+                             site = c(rep("Chancellors", 672), rep("ferry", 672),
+                                      rep("green_bridge", 672), rep("green_bridge", 672),
+                                      rep("lakes", 672), rep("Macquarie", 672),
+                                      rep("McGregor", 672), rep("Schonell", 672), 
+                                      rep("uq", 672)),
+                             type = c(c(rep("vehicles", 672), rep("public_transport", 672),
+                                        rep("cyclists", 672), rep("pedestrians", 672),
+                                        rep("public_transport", 672), rep("cyclists", 672),
+                                        rep("vehicles", 672), rep("vehicles", 672), 
+                                        rep("public_transport", 672)))
+) %>% 
+  left_join(filter(campus_site_mode, direction == "outbound")) %>% 
+  dplyr::select(-direction) %>%
+  mutate(direction = "outbound") %>% 
+  mutate(count = ifelse(is.na(count), 0, count)) %>% 
+  mutate(time = as.numeric(date - min(campus_site_mode$date)) / 900) %>% 
+  mutate(hod = as.numeric(strftime(date, "%H", tz = ""))) %>% 
+  mutate(dow = as.numeric(strftime(date, "%d", tz = "")) - 14) %>% 
+  mutate(wknd = ifelse(test = dow >=6 & dow <= 7, yes = 1, no = 0)) %>% 
+  arrange(site, date)
+
+campus <- bind_rows(campus_inbound, campus_outbound) 
+
+# as character for better graphics
+campus$site_type <- as.character(interaction(campus$type, campus$site, drop = TRUE, sep = " "))
+
+rm(campus_site_mode)
+```
+
+```{r eval=FALSE, include=FALSE}
+campus_wide <- full_join(campus_inbound  %>% rename(inbound = count),
+                         campus_outbound %>% dplyr::select(date, site, type, count) %>% rename(outbound = count)) %>% 
+  mutate(tally = inbound - outbound)
+```
+
+## Time series 
+
+### All 
+
+People counts, one full week, 15min intervals
+
+```{r echo=FALSE}
+campus %>% 
+  mutate(count = ifelse(test = direction == "outbound", yes = -1 * count, no = count)) %>%
+  ggplot(aes(x = date, y = count)) + 
+  geom_col(aes(fill = direction)) + 
+  scale_x_datetime() + theme_minimal() + 
+  xlab("") + ylab("People* counts") +
+  facet_wrap(~site_type)
+```
+
+```{r echo=FALSE}
+campus %>% 
+  mutate(count = ifelse(test = direction == "outbound", yes = -1 * count, no = count)) %>%
+  ggplot(aes(x = date, y = count)) + 
+  geom_line(aes(colour = direction)) + 
+  scale_x_datetime() + theme_minimal() + 
+  xlab("") + ylab("People* counts") +
+  facet_wrap(~site_type)
+```
+
+### Cars
+
+```{r echo=FALSE}
+campus %>% 
+  filter(site %in% c("Chancellors", "McGregor", "Schonell")) %>% 
+  mutate(count = ifelse(test = direction == "outbound", yes = -1 * count, no = count)) %>%
+  ggplot(aes(x = date, y = count)) + 
+  geom_line(aes(color = site, group = interaction(site, direction))) + 
+  scale_x_datetime() + theme_minimal() + 
+  xlab("") + ylab("People* counts") # + geom_hline(yintercept = 0) 
+```
+
+Zero counts on Chancellors from 2016-08-18 10:15:00 to 2016-08-18 12:00:00
+
+### Public transport
+
+```{r echo=FALSE}
+campus %>% 
+  filter(site %in% c("ferry", "lakes", "uq")) %>% 
+  mutate(count = ifelse(test = direction == "outbound", yes = -1 * count, no = count)) %>%
+  ggplot(aes(x = date, y = count)) + 
+  geom_line(aes(color = site, group = interaction(site, direction))) + 
+  scale_x_datetime() + theme_minimal() + 
+  xlab("") + ylab("People* counts") # + geom_hline(yintercept = 0) 
+```
+
+
+### Pedestrians & cyclists
+
+```{r echo=FALSE}
+campus %>% 
+  filter(site %in% c("green_bridge", "Macquarie")) %>% 
+  mutate(count = ifelse(test = direction == "outbound", yes = -1 * count, no = count)) %>%
+  ggplot(aes(x = date, y = count)) + 
+  geom_line(aes(color = site, group = interaction(site, direction))) + 
+  scale_x_datetime() + theme_minimal() + 
+  xlab("") + ylab("People* counts") +
+  facet_wrap(~type)
+```
+
+green_bridge, pedestrians, outbound massive outliers:
+
+2016-08-20 07:30:00
+137
+
+2016-08-20 07:45:00
+265
+
+
+## Distribution of counts
+
+Frequency of counts from one week
+
+```{r echo=FALSE}
+campus %>% 
+  ggplot(aes(x = count)) + 
+  geom_histogram(aes(fill = direction), binwidth = 10) + 
+  gghighlight() +
+  theme_minimal() + 
+  facet_wrap(~direction) +
+  xlab("") + ylab("People* counts") 
+```
+
+## Distribution fits for inbound
+
+```{r}
+campus_inbound_poi <- fitdist(campus_inbound$count, "pois")
+campus_inbound_nb <- fitdist(campus_inbound$count, "nbinom")
+
+par(mfrow = c(1,2))
+denscomp(list(campus_inbound_poi, campus_inbound_nb), legendtext = c("Poisson", "negative binomial"), fitlty = 1)
+cdfcomp(list(campus_inbound_poi, campus_inbound_nb), legendtext = c("Poisson", "negative binomial"), fitlty = 1)
+
+# gofstat(list(campus_inbound_poi, campus_inbound_nb), fitnames = c("Poisson", "negative binomial"))
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+dev.off()
+rm(campus_inbound_poi, campus_inbound_nb)
+```
+
+
+# INLA
+
+## Setup
+
+```{r}
+# ####
+# Jeffreys prior 
+a1 <- 5e-5
+b1 <- 5e-5
+lgprior1 <- list(prec = list(param = c(a1, b1)))
+
+# Gelman prior
+a2 <- -0.5
+b2 <- 5e-5
+lgprior2 <- list(prec = list(param = c(a2, b2)))
+
+# iid prior 
+# Schrödle & Held 2010 & Blangiardo et al 2013
+a0 <- 1
+b0 <- 0.1
+prior.nu <- list(prec = list(param = c(a0, b0)))
+
+# intercept & fixed
+inla.set.control.fixed.default() 
+
+# intercept ~ N(0,0) 
+# other fixed effects ~ N(0, 0.001) 
+# 
+# where the format is N(mean, precision) 
+# precision = inverse of the variance. 
+
+# PC prior
+U <- 1
+hyper.prec = list(theta = list(
+  prior = "pc.prec",
+  param = c(U, 0.01)
+))
+
+# back to factor for regs
+campus_inbound$site_type <- as.character(interaction(campus_inbound$type, campus_inbound$site, drop = TRUE, sep = " "))
+campus_outbound$site_type <- as.character(interaction(campus_outbound$type, campus_outbound$site, drop = TRUE, sep = " "))
+
+levels(campus_inbound$site_type)
+
+```
+
+
+## Inbound 
+
+### RW1
+
+#### One trend for all time series (rw1)
+
+```{r}
+mod1 <- inla(count ~ site_type + 
+               f(time, model = "rw1", scale.model = TRUE, hyper = hyper.prec), 
+             family = "nbinomial", 
+             control.compute = list(dic= TRUE, waic = TRUE),  
+             data = campus_inbound)
+```
+
+```{r}
+summary(mod1)
+autoplot(mod1)
+
+P1 <- bind_cols(time = campus_inbound$time, count = campus_inbound$count, site_type = campus_inbound$site_type,
+                fit = mod1$summary.fitted.values$`0.5quant`,
+                lci = mod1$summary.fitted.values$`0.025quant`, 
+                uci = mod1$summary.fitted.values$`0.975quant`)
+
+ggplot(P1, aes(x = time)) +
+  geom_line(aes(y = count), colour = "orange", alpha = 0.5) +
+  geom_line(aes(y = fit), col = "purple") +
+  geom_ribbon(aes(ymin = lci, ymax = uci), alpha = 0.3) +
+  facet_wrap(~site_type) +
+  theme_minimal() + xlab("") 
+
+P1 %>% 
+  filter(site_type == "public_transport lakes") %>% 
+  ggplot(aes(x = time)) +
+  geom_point(aes(y = count), colour = "orange", size = 2, alpha = 0.5) +
+  geom_line(aes(y = fit), col = "purple") +
+  facet_wrap(~site_type) +
+  theme_minimal() + xlab("") 
+
+ggplot(P1, aes(x = count, y = fit)) +
+  geom_point(alpha = 0.5) +
+  facet_wrap(~site_type) +
+  theme_minimal() + xlab("Counts")  + ylab("fitted")  
+```
+
+#### One trend for mode of transport (rw1)
+
+```{r}
+inla.setOption(scale.model.default = TRUE)
+
+campus_inbound$cyclists <- as.numeric(campus_inbound$type == "cyclists")
+campus_inbound$pedestrians <- as.numeric(campus_inbound$type == "pedestrians")
+campus_inbound$public_transport <- as.numeric(campus_inbound$type == "public_transport")
+campus_inbound$vehicles <- as.numeric(campus_inbound$type == "vehicles")
+
+campus_inbound$time2 <- campus_inbound$time
+campus_inbound$time3 <- campus_inbound$time
+campus_inbound$time4 <- campus_inbound$time
+  
+mod2 <- inla(count ~ site_type + 
+               f(time, cyclists, model = "rw1", hyper = hyper.prec) + 
+               f(time2, pedestrians, model = "rw1", hyper = hyper.prec) + 
+               f(time3, public_transport, model = "rw1", hyper = hyper.prec) + 
+               f(time4, vehicles, model = "rw1", hyper = hyper.prec), 
+             family = "nbinomial", 
+             control.compute = list(dic= TRUE, waic = TRUE),  
+             data = campus_inbound)
+```
+
+```{r}
+summary(mod2)
+autoplot(mod2)
+
+P2 <- bind_cols(time = campus_inbound$time, count = campus_inbound$count, site_type = campus_inbound$site_type,
+                fit = mod2$summary.fitted.values$`0.5quant`,
+                lci = mod2$summary.fitted.values$`0.025quant`, 
+                uci = mod2$summary.fitted.values$`0.975quant`)
+
+ggplot(P2, aes(x = time)) +
+  geom_line(aes(y = count), colour = "orange", alpha = 0.5) +
+  geom_line(aes(y = fit), col = "purple") +
+  geom_ribbon(aes(ymin = lci, ymax = uci), alpha = 0.3) +
+  facet_wrap(~site_type) +
+  theme_minimal() + xlab("") 
+
+P2 %>% 
+  filter(site_type == "public_transport lakes") %>% 
+  ggplot(aes(x = time)) +
+  geom_point(aes(y = count), colour = "orange", size = 2, alpha = 0.5) +
+  geom_line(aes(y = fit), col = "purple") +
+  facet_wrap(~site_type) +
+  theme_minimal() + xlab("") 
+
+ggplot(P2, aes(x = count, y = fit)) +
+  geom_point(alpha = 0.5) +
+  facet_wrap(~site_type) +
+  theme_minimal() + xlab("Counts")  + ylab("fitted")
+  
+```
+
+#### One trend for site (rw1)
+
+```{r}
+campus_inbound$Chancellors <- as.numeric(campus_inbound$site == "Chancellors")
+campus_inbound$ferry <- as.numeric(campus_inbound$site == "ferry")
+campus_inbound$green_bridge <- as.numeric(campus_inbound$site == "green_bridge")
+campus_inbound$lakes <- as.numeric(campus_inbound$site == "lakes")
+campus_inbound$Macquarie <- as.numeric(campus_inbound$site == "Macquarie")
+campus_inbound$McGregor <- as.numeric(campus_inbound$site == "McGregor")
+campus_inbound$Schonell <- as.numeric(campus_inbound$site == "Schonell")
+campus_inbound$uq <- as.numeric(campus_inbound$site == "uq")
+
+campus_inbound$time2 <- campus_inbound$time
+campus_inbound$time3 <- campus_inbound$time
+campus_inbound$time4 <- campus_inbound$time
+campus_inbound$time5 <- campus_inbound$time
+campus_inbound$time6 <- campus_inbound$time
+campus_inbound$time7 <- campus_inbound$time
+campus_inbound$time8 <- campus_inbound$time
+  
+mod3 <- inla(count ~ site_type + 
+               f(time, Chancellors, model = "rw1", hyper = hyper.prec) + 
+               f(time2, ferry, model = "rw1", hyper = hyper.prec) + 
+               f(time3, green_bridge, model = "rw1", hyper = hyper.prec) + 
+               f(time4, lakes, model = "rw1", hyper = hyper.prec) + 
+               f(time5, Macquarie, model = "rw1", hyper = hyper.prec) + 
+               f(time6, McGregor, model = "rw1", hyper = hyper.prec) + 
+               f(time7, Schonell, model = "rw1", hyper = hyper.prec) + 
+               f(time8, uq, model = "rw1", hyper = hyper.prec), 
+             family = "nbinomial", 
+             control.compute = list(dic= TRUE, waic = TRUE),  
+             data = campus_inbound)
+```
+
+```{r}
+summary(mod3)
+autoplot(mod3)
+
+P3 <- bind_cols(time = campus_inbound$time, count = campus_inbound$count, site_type = campus_inbound$site_type,
+                fit = mod3$summary.fitted.values$`0.5quant`,
+                lci = mod3$summary.fitted.values$`0.025quant`, 
+                uci = mod3$summary.fitted.values$`0.975quant`)
+
+ggplot(P3, aes(x = time)) +
+  geom_line(aes(y = count), colour = "orange", alpha = 0.5) +
+  geom_line(aes(y = fit), col = "purple") +
+  geom_ribbon(aes(ymin = lci, ymax = uci), alpha = 0.3) +
+  facet_wrap(~site_type) +
+  theme_minimal() + xlab("") 
+
+P3 %>% 
+  filter(site_type == "public_transport lakes") %>% 
+  ggplot(aes(x = time)) +
+  geom_point(aes(y = count), colour = "orange", size = 2, alpha = 0.5) +
+  geom_line(aes(y = fit), col = "purple") +
+  facet_wrap(~site_type) +
+  theme_minimal() + xlab("") 
+
+ggplot(P3, aes(x = count, y = fit)) +
+  geom_point(alpha = 0.5) +
+  facet_wrap(~site_type) +
+  theme_minimal() + xlab("Counts")  + ylab("fitted")
+  
+```
+
+#### One trend for mode & site (rw1)
+
+```{r}
+campus_inbound$cyclists_green_bridge <- as.numeric(campus_inbound$site_type == "cyclists green_bridge")
+campus_inbound$cyclists_Macquarie <- as.numeric(campus_inbound$site_type == "cyclists Macquarie")
+campus_inbound$pedestrians_green_bridge <- as.numeric(campus_inbound$site_type == "pedestrians green_bridge")
+campus_inbound$public_transport_ferry <- as.numeric(campus_inbound$site_type == "public_transport ferry")
+campus_inbound$public_transport_lakes <- as.numeric(campus_inbound$site_type == "public_transport lakes")
+campus_inbound$public_transport_uq <- as.numeric(campus_inbound$site_type == "public_transport uq")
+campus_inbound$vehicles_Chancellors <- as.numeric(campus_inbound$site_type == "vehicles Chancellors")
+campus_inbound$vehicles_McGregor <- as.numeric(campus_inbound$site_type == "vehicles McGregor")
+campus_inbound$vehicles_Schonell <- as.numeric(campus_inbound$site_type == "vehicles Schonell")
+
+campus_inbound$time9 <- campus_inbound$time
+  
+mod4 <- inla(count ~ site_type + 
+               f(time, cyclists_green_bridge, model = "rw1", hyper = hyper.prec) + 
+               f(time2, cyclists_Macquarie, model = "rw1", hyper = hyper.prec) + 
+               f(time3, pedestrians_green_bridge, model = "rw1", hyper = hyper.prec) + 
+               f(time4, public_transport_ferry, model = "rw1", hyper = hyper.prec) + 
+               f(time5, public_transport_lakes, model = "rw1", hyper = hyper.prec) + 
+               f(time6, public_transport_uq, model = "rw1", hyper = hyper.prec) + 
+               f(time7, vehicles_Chancellors, model = "rw1", hyper = hyper.prec) + 
+               f(time8, vehicles_McGregor, model = "rw1", hyper = hyper.prec) + 
+               f(time9, vehicles_Schonell, model = "rw1", hyper = hyper.prec), 
+             family = "nbinomial", 
+             control.compute = list(dic= TRUE, waic = TRUE),  
+             data = campus_inbound)
+```
+
+```{r}
+summary(mod4)
+autoplot(mod4)
+
+P4 <- bind_cols(time = campus_inbound$time, count = campus_inbound$count, site_type = campus_inbound$site_type,
+                fit = mod4$summary.fitted.values$`0.5quant`,
+                lci = mod4$summary.fitted.values$`0.025quant`, 
+                uci = mod4$summary.fitted.values$`0.975quant`)
+
+ggplot(P4, aes(x = time)) +
+  geom_line(aes(y = count), colour = "orange", alpha = 0.5) +
+  geom_line(aes(y = fit), col = "purple") +
+  geom_ribbon(aes(ymin = lci, ymax = uci), alpha = 0.3) +
+  facet_wrap(~site_type) +
+  theme_minimal() + xlab("") 
+
+P4 %>% 
+  filter(site_type == "public_transport lakes") %>% 
+  ggplot(aes(x = time)) +
+  geom_point(aes(y = count), colour = "orange", size = 2, alpha = 0.5) +
+  geom_line(aes(y = fit), col = "purple") +
+  facet_wrap(~site_type) +
+  theme_minimal() + xlab("") 
+
+ggplot(P4, aes(x = count, y = fit)) +
+  geom_point(alpha = 0.5) +
+  facet_wrap(~site_type) +
+  theme_minimal() + xlab("Counts")  + ylab("fitted")
+```
+
+### RW2 
+
+#### One trend for all time series (rw2)
+
+```{r}
+mod5 <- inla(count ~ site_type + 
+               f(time, model = "rw2", scale.model = TRUE, hyper = hyper.prec), 
+             family = "nbinomial", 
+             control.compute = list(dic= TRUE, waic = TRUE),  
+             data = campus_inbound)
+```
+
+```{r}
+summary(mod5)
+autoplot(mod5)
+
+P5 <- bind_cols(time = campus_inbound$time, count = campus_inbound$count, site_type = campus_inbound$site_type,
+                fit = mod5$summary.fitted.values$`0.5quant`,
+                lci = mod5$summary.fitted.values$`0.025quant`, 
+                uci = mod5$summary.fitted.values$`0.975quant`)
+
+ggplot(P5, aes(x = time)) +
+  geom_line(aes(y = count), colour = "orange", alpha = 0.5) +
+  geom_line(aes(y = fit), col = "purple") +
+  geom_ribbon(aes(ymin = lci, ymax = uci), alpha = 0.3) +
+  facet_wrap(~site_type) +
+  theme_minimal() + xlab("") 
+
+P5 %>% 
+  filter(site_type == "public_transport lakes") %>% 
+  ggplot(aes(x = time)) +
+  geom_point(aes(y = count), colour = "orange", size = 2, alpha = 0.5) +
+  geom_line(aes(y = fit), col = "purple") +
+  facet_wrap(~site_type) +
+  theme_minimal() + xlab("") 
+
+ggplot(P5, aes(x = count, y = fit)) +
+  geom_point(alpha = 0.5) +
+  facet_wrap(~site_type) +
+  theme_minimal() + xlab("Counts")  + ylab("fitted")  
+```
+
+#### One trend for mode of transport (rw2)
+
+```{r}
+inla.setOption(scale.model.default = TRUE)
+
+campus_inbound$cyclists <- as.numeric(campus_inbound$type == "cyclists")
+campus_inbound$pedestrians <- as.numeric(campus_inbound$type == "pedestrians")
+campus_inbound$public_transport <- as.numeric(campus_inbound$type == "public_transport")
+campus_inbound$vehicles <- as.numeric(campus_inbound$type == "vehicles")
+
+campus_inbound$time2 <- campus_inbound$time
+campus_inbound$time3 <- campus_inbound$time
+campus_inbound$time4 <- campus_inbound$time
+  
+mod6 <- inla(count ~ site_type + 
+               f(time, cyclists, model = "rw2", hyper = hyper.prec) + 
+               f(time2, pedestrians, model = "rw2", hyper = hyper.prec) + 
+               f(time3, public_transport, model = "rw2", hyper = hyper.prec) + 
+               f(time4, vehicles, model = "rw2", hyper = hyper.prec), 
+             family = "nbinomial", 
+             control.compute = list(dic= TRUE, waic = TRUE),  
+             data = campus_inbound)
+```
+
+```{r}
+summary(mod6)
+autoplot(mod6)
+
+P6 <- bind_cols(time = campus_inbound$time, count = campus_inbound$count, site_type = campus_inbound$site_type,
+                fit = mod6$summary.fitted.values$`0.5quant`,
+                lci = mod6$summary.fitted.values$`0.025quant`, 
+                uci = mod6$summary.fitted.values$`0.975quant`)
+
+ggplot(P6, aes(x = time)) +
+  geom_line(aes(y = count), colour = "orange", alpha = 0.5) +
+  geom_line(aes(y = fit), col = "purple") +
+  geom_ribbon(aes(ymin = lci, ymax = uci), alpha = 0.3) +
+  facet_wrap(~site_type) +
+  theme_minimal() + xlab("") 
+
+P6 %>% 
+  filter(site_type == "public_transport lakes") %>% 
+  ggplot(aes(x = time)) +
+  geom_point(aes(y = count), colour = "orange", size = 2, alpha = 0.5) +
+  geom_line(aes(y = fit), col = "purple") +
+  facet_wrap(~site_type) +
+  theme_minimal() + xlab("") 
+
+ggplot(P6, aes(x = count, y = fit)) +
+  geom_point(alpha = 0.5) +
+  facet_wrap(~site_type) +
+  theme_minimal() + xlab("Counts")  + ylab("fitted")
+  
+```
+
+#### One trend for site (rw2)
+
+```{r}
+campus_inbound$Chancellors <- as.numeric(campus_inbound$site == "Chancellors")
+campus_inbound$ferry <- as.numeric(campus_inbound$site == "ferry")
+campus_inbound$green_bridge <- as.numeric(campus_inbound$site == "green_bridge")
+campus_inbound$lakes <- as.numeric(campus_inbound$site == "lakes")
+campus_inbound$Macquarie <- as.numeric(campus_inbound$site == "Macquarie")
+campus_inbound$McGregor <- as.numeric(campus_inbound$site == "McGregor")
+campus_inbound$Schonell <- as.numeric(campus_inbound$site == "Schonell")
+campus_inbound$uq <- as.numeric(campus_inbound$site == "uq")
+
+campus_inbound$time2 <- campus_inbound$time
+campus_inbound$time3 <- campus_inbound$time
+campus_inbound$time4 <- campus_inbound$time
+campus_inbound$time5 <- campus_inbound$time
+campus_inbound$time6 <- campus_inbound$time
+campus_inbound$time7 <- campus_inbound$time
+campus_inbound$time8 <- campus_inbound$time
+  
+mod7 <- inla(count ~ site_type + 
+               f(time, Chancellors, model = "rw2", hyper = hyper.prec) + 
+               f(time2, ferry, model = "rw2", hyper = hyper.prec) + 
+               f(time3, green_bridge, model = "rw2", hyper = hyper.prec) + 
+               f(time4, lakes, model = "rw2", hyper = hyper.prec) + 
+               f(time5, Macquarie, model = "rw2", hyper = hyper.prec) + 
+               f(time6, McGregor, model = "rw2", hyper = hyper.prec) + 
+               f(time7, Schonell, model = "rw2", hyper = hyper.prec) + 
+               f(time8, uq, model = "rw2", hyper = hyper.prec), 
+             family = "nbinomial", 
+             control.compute = list(dic= TRUE, waic = TRUE),  
+             data = campus_inbound)
+```
+
+```{r}
+summary(mod7)
+autoplot(mod7)
+
+P7 <- bind_cols(time = campus_inbound$time, count = campus_inbound$count, site_type = campus_inbound$site_type,
+                fit = mod7$summary.fitted.values$`0.5quant`,
+                lci = mod7$summary.fitted.values$`0.025quant`, 
+                uci = mod7$summary.fitted.values$`0.975quant`)
+
+ggplot(P7, aes(x = time)) +
+  geom_line(aes(y = count), colour = "orange", alpha = 0.5) +
+  geom_line(aes(y = fit), col = "purple") +
+  geom_ribbon(aes(ymin = lci, ymax = uci), alpha = 0.3) +
+  facet_wrap(~site_type) +
+  theme_minimal() + xlab("") 
+
+P7 %>% 
+  filter(site_type == "public_transport lakes") %>% 
+  ggplot(aes(x = time)) +
+  geom_point(aes(y = count), colour = "orange", size = 2, alpha = 0.5) +
+  geom_line(aes(y = fit), col = "purple") +
+  facet_wrap(~site_type) +
+  theme_minimal() + xlab("") 
+
+ggplot(P7, aes(x = count, y = fit)) +
+  geom_point(alpha = 0.5) +
+  facet_wrap(~site_type) +
+  theme_minimal() + xlab("Counts")  + ylab("fitted")
+  
+```
+
+#### One trend for mode & site (rw2)
+
+```{r}
+campus_inbound$cyclists_green_bridge <- as.numeric(campus_inbound$site_type == "cyclists green_bridge")
+campus_inbound$cyclists_Macquarie <- as.numeric(campus_inbound$site_type == "cyclists Macquarie")
+campus_inbound$pedestrians_green_bridge <- as.numeric(campus_inbound$site_type == "pedestrians green_bridge")
+campus_inbound$public_transport_ferry <- as.numeric(campus_inbound$site_type == "public_transport ferry")
+campus_inbound$public_transport_lakes <- as.numeric(campus_inbound$site_type == "public_transport lakes")
+campus_inbound$public_transport_uq <- as.numeric(campus_inbound$site_type == "public_transport uq")
+campus_inbound$vehicles_Chancellors <- as.numeric(campus_inbound$site_type == "vehicles Chancellors")
+campus_inbound$vehicles_McGregor <- as.numeric(campus_inbound$site_type == "vehicles McGregor")
+campus_inbound$vehicles_Schonell <- as.numeric(campus_inbound$site_type == "vehicles Schonell")
+
+campus_inbound$time9 <- campus_inbound$time
+  
+mod8 <- inla(count ~ site_type + 
+               f(time, cyclists_green_bridge, model = "rw2", hyper = hyper.prec) + 
+               f(time2, cyclists_Macquarie, model = "rw2", hyper = hyper.prec) + 
+               f(time3, pedestrians_green_bridge, model = "rw2", hyper = hyper.prec) + 
+               f(time4, public_transport_ferry, model = "rw2", hyper = hyper.prec) + 
+               f(time5, public_transport_lakes, model = "rw2", hyper = hyper.prec) + 
+               f(time6, public_transport_uq, model = "rw2", hyper = hyper.prec) + 
+               f(time7, vehicles_Chancellors, model = "rw2", hyper = hyper.prec) + 
+               f(time8, vehicles_McGregor, model = "rw2", hyper = hyper.prec) + 
+               f(time9, vehicles_Schonell, model = "rw2", hyper = hyper.prec), 
+             family = "nbinomial", 
+             control.compute = list(dic= TRUE, waic = TRUE),  
+             data = campus_inbound)
+```
+
+```{r}
+summary(mod8)
+autoplot(mod8)
+
+P8 <- bind_cols(time = campus_inbound$time, count = campus_inbound$count, site_type = campus_inbound$site_type,
+                fit = mod8$summary.fitted.values$`0.5quant`,
+                lci = mod8$summary.fitted.values$`0.025quant`, 
+                uci = mod8$summary.fitted.values$`0.975quant`)
+
+ggplot(P8, aes(x = time)) +
+  geom_line(aes(y = count), colour = "orange", alpha = 0.5) +
+  geom_line(aes(y = fit), col = "purple") +
+  geom_ribbon(aes(ymin = lci, ymax = uci), alpha = 0.3) +
+  facet_wrap(~site_type) +
+  theme_minimal() + xlab("") 
+
+P8 %>% 
+  filter(site_type == "public_transport lakes") %>% 
+  ggplot(aes(x = time)) +
+  geom_point(aes(y = count), colour = "orange", size = 2, alpha = 0.5) +
+  geom_line(aes(y = fit), col = "purple") +
+  facet_wrap(~site_type) +
+  theme_minimal() + xlab("") 
+
+ggplot(P8, aes(x = count, y = fit)) +
+  geom_point(alpha = 0.5) +
+  facet_wrap(~site_type) +
+  theme_minimal() + xlab("Counts")  + ylab("fitted")
+```
+
+### Comparing
+
+```{r}
+dotchart(c(mod1$dic$dic, mod2$dic$dic, mod3$dic$dic, mod4$dic$dic,
+           mod5$dic$dic, mod6$dic$dic, mod7$dic$dic, mod8$dic$dic),
+         labels = c("mod1", "mod2", "mod3", "mod4", "mod5", "mod6", "mod7", "mod8"), main = "DIC")
+
+dotchart(c(mod1$waic$waic, mod2$waic$waic, mod3$waic$waic, mod4$waic$waic,
+           mod5$waic$waic, mod6$waic$waic, mod7$waic$waic, mod8$waic$waic),
+         labels = c("mod1", "mod2", "mod3", "mod4", "mod5", "mod6", "mod7", "mod8"), main = "WAIC")
+```
+
+
+

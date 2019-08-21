@@ -1,0 +1,68 @@
+---
+title: "Google places - EDA 01"
+author: "Radoslaw Panczak"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  html_document: 
+    # css: custom.css
+    toc: true
+    toc_depth: 4
+    toc_float: true
+    number_sections: true
+    theme: united 
+    highlight: pygments 
+---
+
+<!-- ------------------------------------------------------------ --> 
+<!-- ------------------------------------------------------------ --> 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = TRUE, warning = TRUE, fig.width=8, fig.height=6, dpi=300, out.width="800px", out.height="600px")
+
+set.seed(12345)
+
+library(pacman) 
+
+p_load(tidyverse, here, readxl, magrittr, anytime, jsonlite, fs, 
+       skimr, naniar, janitor, kableExtra, 
+       sf, tmap, tmaptools)
+
+tmap_mode("view") # makes map interactive
+
+isUnique <- function(vector){
+  return(!any(duplicated(vector)))
+}
+```
+
+
+```{r eval=FALSE, include=FALSE}
+p_load(bigrquery)
+
+project <- "goopla-1509504704864"
+# project <- "twitter-stream-205107"
+
+sql <- "SELECT * FROM `twitter-stream-205107.twitter_stream.googleplaces`"
+
+tb <- bq_project_query(project, sql)
+places_raw <- bq_table_download(tb)
+# Error: Requested Resource Too Large to Return [responseTooLarge]
+
+saveRDS(places_raw, file = "data/google_places/raw/places_raw.rds")
+```
+
+# Session info
+
+```{r}
+sessionInfo()
+```
+
+
+
+
+
+
+
+
+
+
+
