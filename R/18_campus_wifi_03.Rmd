@@ -43,7 +43,6 @@ p_load(tidyverse, magrittr, lubridate, corrplot, scales, sugrrants,
 # Data
 
 <!-- ------------------------------------------------------------ --> 
-
 ## Pedestrian & bike counts
 
 ### Original data
@@ -230,7 +229,6 @@ bcc_traffic_occupancy <- bcc_traffic %>%
   mutate(net = inbound - outbound) %>% 
   dplyr::select(-in_loess_week, -in_loess_weekend, -out_loess_week, -out_loess_weekend)
 
-
 ```
 
 Detailed example counts for week of `2018-12-03` across type and direction. Both original counts (`_orig` suffix on legend) and counts corrected with occupancy are plotted.
@@ -316,10 +314,29 @@ bcc_traffic_occupancy %>%
 ### Original data 
 
 ```{r echo=FALSE}
-prime_agg <- readRDS("R:/WIFIUQHPC-Q0766/data/clean/processed_prime_reports/prime_agg_2018_12_2019_04.Rds") %>% 
+prime_agg <- 
+  readRDS("Z:/WIFIUQHPC-Q0766/TEMPO_Wi-Fi/data/clean/processed_prime_reports/prime_agg_2018_12_2019_04.Rds") %>%
   rename(date = timestamp) %>% 
   filter(date >= ymd_hms("2018-12-03 00:00:00", tz = "Australia/Brisbane")) %>% 
   filter(date <= ymd_hms("2019-03-24 23:59:59", tz = "Australia/Brisbane")) 
+
+# prime_agg <- 
+#   readRDS("Z:/WIFIUQHPC-Q0766/TEMPO_Wi-Fi/data/clean/processed_prime_reports/prime_agg_2018_12_2019_04_ALT.Rds") %>%
+#   rename(date = timestamp) %>%
+#   filter(date >= ymd_hms("2018-12-03 00:00:00", tz = "Australia/Brisbane")) %>% 
+#   filter(date <= ymd_hms("2019-03-24 23:59:59", tz = "Australia/Brisbane")) 
+
+# prime_agg <- 
+#   readRDS("Z:/WIFIUQHPC-Q0766/TEMPO_Wi-Fi/data/clean/processed_prime_reports/prime_agg_2.Rds") %>%
+#   rename(date = index) %>% 
+#   filter(date >= ymd_hms("2018-12-03 00:00:00", tz = "Australia/Brisbane")) %>% 
+#   filter(date <= ymd_hms("2019-03-24 23:59:59", tz = "Australia/Brisbane")) 
+
+# prime_agg <- 
+#   readRDS("Z:/WIFIUQHPC-Q0766/TEMPO_Wi-Fi/data/clean/processed_prime_reports/prime_agg_3.Rds") %>%
+#   rename(date = prime_agg_3) %>%
+#   filter(date >= ymd_hms("2018-12-03 00:00:00", tz = "Australia/Brisbane")) %>% 
+#   filter(date <= ymd_hms("2019-03-24 23:59:59", tz = "Australia/Brisbane")) 
 
 # tz(prime_agg$date)
 
@@ -354,7 +371,6 @@ p <- prime_agg %>%
 
 prettify(p)
 ```
-
 
 ### Distribution of counts
 
@@ -454,7 +470,7 @@ data <- full_join(prime_agg, green_bridge_wide) %>%
          weekend = if_else(weekday %in% c("Saturday", "Sunday"), "Weekend", "Weekday"),
          time = as.numeric(date - min(prime_agg$date)) / 900) %>% 
   mutate(stock = veh_stock + ped_stock) %>% 
-  left_join(rename(uqweather, date = timestamp)) %>% 
+  # left_join(rename(uqweather, date = timestamp)) %>% 
   mutate(holidays = ifelse(date >= ymd_hms("2018-12-23 00:00:00", tz = "Australia/Brisbane") & 
                              date <= ymd_hms("2019-01-02 23:59:59", tz = "Australia/Brisbane"),
                            yes = "yes", no = "no"))
@@ -575,18 +591,6 @@ data %>%
 data %>% 
   filter(date <= ymd_hms("2018-12-09 23:59:59", tz = "Australia/Brisbane")) %>%
   dplyr::select(date, users_mac, ped_stock, veh_stock, stock) %>% 
-  gather(key = "type", value = "count", users_mac:stock) %>% 
-  ggplot(aes(x = date, y = count)) +
-  geom_line() +
-  theme(legend.position = "none") + 
-  theme_minimal() + ylab("Connected users") +
-  facet_wrap(~type, ncol = 1, scales = "free_y")
-```
-
-```{r eval=FALSE}
-data %>% 
-  # filter(date >= ymd_hms("2019-01-06 23:59:59", tz = "Australia/Brisbane")) %>%
-  dplyr::select(date, users_mac, stock) %>% 
   gather(key = "type", value = "count", users_mac:stock) %>% 
   ggplot(aes(x = date, y = count)) +
   geom_line() +
