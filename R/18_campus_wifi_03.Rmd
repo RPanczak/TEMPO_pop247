@@ -30,11 +30,12 @@ set.seed(12345)
 options(scipen = 999)
 
 library(pacman) 
-p_load(tidyverse, magrittr, lubridate, corrplot, scales, sugrrants,
+p_load(tidyverse, magrittr, lubridate, corrplot, scales, sugrrants, 
+       sf, tmap,
        fitdistrplus, INLA, INLAutils, gganimate)
 
 # inla.setOption(num.threads = 1) 
-
+tmap_mode("view")
 ```
 
 <!-- ------------------------------------------------------------ --> 
@@ -305,6 +306,50 @@ bcc_traffic_occupancy %>%
   theme_minimal() + 
   xlab("") + ylab("Wi-Fi users") 
 ```
+
+<!-- ------------------------------------------------------------ --> 
+
+## GoCard
+
+### Locations
+
+```{r, eval=FALSE}
+campus_sf <- st_read("data/geo/MB_2016_QLD_campus.shp", quiet = TRUE, stringsAsFactors = FALSE)
+
+stops <- read_csv("data/goCard/raw/stops.txt", 
+                  col_types = cols(
+                    stop_id = col_character()
+                  )) %>% 
+  st_as_sf(coords = c("stop_lon", "stop_lat"), crs = 4326) %>% 
+  st_transform(4283) 
+
+# qtm(stops)
+
+# campus_stops <- st_intersection(stops, select(st_buffer(campus_sf, 0.005), geometry))
+
+campus_stops <- st_intersection(stops, st_geometry(campus_sf)) %>% 
+  # filter(stop_name != "place_INTUQ" & stop_id != "place_UQLAKE") %>% 
+  filter(!str_detect(stop_name, fixed("Coldridge St")))
+
+temp <- stops %>% 
+  filter(stop_name == "UQ St Lucia ferry terminal") %>% 
+  st_as_sf(coords = c("stop_lon", "stop_lat"), crs = 4326) %>% 
+  st_transform(4283) 
+
+campus_stops <- do.call(rbind, list(campus_stops, temp))
+
+rm(temp)
+
+saveRDS(campus_stops, "data/goCard/clean/campus_stops.Rds")
+```
+
+Two 'clusters' of bus stops and ferry terminal:
+
+```{r}
+campus_stops <- readRDS("data/goCard/clean/campus_stops.Rds")
+qtm(campus_stops)
+```
+
 
 
 <!-- ------------------------------------------------------------ --> 
