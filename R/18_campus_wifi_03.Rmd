@@ -312,145 +312,95 @@ bcc_traffic_occupancy %>%
 ## GoCard
 
 ```{r}
-campus_stops <- readRDS("data/goCard/clean/campus_stops.Rds") %>% 
-  dplyr::filter(!is.na(stop_code)) %>% 
-  dplyr::select(-stop_code, -stop_desc, -zone_id, -location_type)
+campus_gocard_agg <- readRDS("data/goCard/clean/campus_gocard_agg.Rds")
 ```
 
+### Original data
 
-### Data
+Detailed example counts for week of `2018-12-03` across direction.
 
-```{r eval=FALSE, include=FALSE}
-# fist solution
-# library(utils)
-# library(stringr)
-# 
-# # Dashes in second row give column widths (I guess)
-# dashes <- '-------------------------------------------------- ----------------------- --------------- --------------- --------------- ------------------------------ ----------------------- ----------------------- ----------------------- --------------- --------------- --------------- --------------- ----------------------- ----------------------- ---------- --------------- --------------- -------------------------------------------------- -------------------- ------ --------------- ----------------- ----------------------------------------------------------------------------------------------------'
-# 
-# widths <- str_length(str_split(dashes, ' ')[[1]]) + 1 # +1 to count the gaps in between
-# widths[length(widths)] <- widths[length(widths)] - 1 # except for the last column
-# 
-# # File encoding removes the Byte Order Mark at the beginning and keeps things in line
-# head <- read.fwf('data/goCard/raw/test.txt', 
-#                  n = 1, stringsAsFactors = FALSE, 
-#                  header = FALSE, widths = widths, fileEncoding = "UTF-8-BOM", strip.white = TRUE)
-# 
-# 
-# data <- read.fwf('data/goCard/raw/test.txt', 
-#                 skip = 2, col.names = head, stringsAsFactors = FALSE, 
-#                 header = FALSE, widths = widths, fileEncoding = "UTF-8-BOM", strip.white = TRUE)
-# rm(head)
-# str(data)
-
-gocard_19_01 <- 
-  read_fwf('data/goCard/raw/01. UQJan2019.rpt', 
-           fwf_empty('data/goCard/raw/01. UQJan2019.rpt',
-                     col_names = c("operator", "operationsDate", "run", "route", "service", "direction", 
-                                   "scheduledstart", "actualstart", "actualend", 
-                                   "employeeID", "vehicle", "dcuCode", "ticketNumber", 
-                                   "boardingTime", "alightingTime", "passengers", 
-                                   "boarding_stop", "alighting_stop", 
-                                   "journeyID", "eis", "tripID", 
-                                   "originDevice", "destinationDevice", "ticketType")
-           ), skip = 2, na = c("", "NA", "NULL")) %>%  
-  rename(alighting_time = alightingTime,
-         boarding_time = boardingTime,
-         ticket_type = ticketType) %>% 
-  mutate(tripID = as.integer(tripID)) %>% 
-  arrange(journeyID, eis, tripID)
-
-saveRDS(gocard_19_01, "data/goCard/clean/gocard_19_01.Rds")
-
-# temp <- as.data.frame(table(gocard_19_01$ticket_type))
-```
-
-```{r}
-gocard_19_01 <- readRDS("data/goCard/clean/gocard_19_01.Rds") %>% 
-  dplyr::select(journeyID, eis, tripID,
-                alighting_stop, alighting_time,
-                boarding_stop, boarding_time,
-                ticket_type) 
-
-# temp <- gocard_19_01 %>% filter(tripID == 10) %>% dplyr::select(journeyID, eis) 
-# temp <- gocard_19_01 %>% filter(journeyID == 2019010407203662091846466, eis == 11529215047309111296) %>% arrange(tripID)
-
-temp <- gocard_19_01 %>% 
-  arrange(journeyID, eis, tripID) %>% 
-  group_by(journeyID, eis) %>% 
-  filter(row_number() == n())
-
-# table(temp$tripID)
-
-campus_in_19_01 <- campus_stops %>% 
-  st_drop_geometry() %>% 
-  dplyr::select(stop_id, stop_name) %>% 
-  left_join(temp, by = c("stop_id" = "alighting_stop")) %>% 
-  mutate(INOUT = "IN") %>% 
-  mutate(timestamp = alighting_time) %>% 
-  arrange(timestamp)
-
-temp <- gocard_19_01 %>% 
-  arrange(journeyID, eis, tripID) %>% 
-  group_by(journeyID, eis) %>% 
-  filter(row_number() == 1)
-
-# table(temp$tripID)
-
-campus_out_19_01 <- campus_stops %>% 
-  st_drop_geometry() %>% 
-  dplyr::select(stop_id, stop_name) %>% 
-  left_join(temp , by = c("stop_id" = "boarding_stop")) %>% 
-  mutate(INOUT = "OUT") %>% 
-  mutate(timestamp = boarding_time) %>% 
-  arrange(timestamp)
-
-campus_gocard <- bind_rows(campus_in_19_01, campus_out_19_01)
-
-campus_gocard$timestamp <- force_tz(campus_gocard$timestamp, "Australia/Brisbane")
-
-campus_gocard$recorded_15 <- ymd_hms(cut(campus_gocard$timestamp,
-                                         breaks = seq(ymd_hms("2019-01-01 00:00:00",
-                                                              tz = "Australia/Brisbane"),
-                                                      ymd_hms("2019-02-01 00:00:00",
-                                                              tz = "Australia/Brisbane"),
-                                                      as.difftime(15, units = "mins")),
-                                         # as.difftime(1, units = "hours")),
-                                         include.lowest = TRUE), tz = "Australia/Brisbane")
-
-# temp <- 
-#   campus_gocard %>% 
-#   group_by(recorded_15) %>% 
-#   summarise(min = min(timestamp),
-#             max = max(timestamp)) %>% 
-#   arrange(recorded_15) %>% 
-#   ungroup()
-
-
-rm(gocard_19_01, campus_in_19_01, campus_out_19_01)
-gc()
-```
-
-
-All the `r comma(nrow(campus_gocard))` goCard records with `alighting_stop` or `boarding_stop` variable equal to one of the locations indicated above were selected from Jan 2019 dataset. `alighting_stop` and `alighting_time` were used to get arrivals to campus and 
-`boarding_stop` on campus used `boarding_time` indicated departures:
-
-
-For `IN` traffic `alighting_time` was used as timestamp of event, and for `OUT` - `boarding_time`. Summarizing these for two major types of `passenger_type` looks like:
-
-```{r, warning=FALSE}
-campus_gocard %>% 
-  filter(timestamp >= ymd_hms("2019-01-21 00:00:00 AEST") & 
-           timestamp <= ymd_hms("2019-01-27 23:59:59 AEST")) %>%
-  # filter(passenger_type %in% c("Adult", "Tertiary Student")) %>% 
-  # ggplot(aes(timestamp, ..count.., color = INOUT, linetype = passenger_type)) +
-  ggplot(aes(timestamp, ..count.., color = INOUT)) +
-  geom_freqpoly(bins = 7*24) + scale_x_datetime(breaks = date_breaks("1 day"), expand = c(0, 0),
-                                                limits = c(
-                                                  ymd_hms("2019-01-21 00:00:00 AEST"),
-                                                  ymd_hms("2019-01-27 23:59:59 AEST"))) + 
+```{r echo=FALSE}
+campus_gocard_agg %>% 
+  filter(recorded_15 >= ymd_hms("2019-01-21 00:00:00 AEST") & 
+           recorded_15 <= ymd_hms("2019-01-27 23:59:59 AEST")) %>%
+  ggplot(aes(recorded_15, count, col = INOUT)) +
+  geom_line() + 
+  scale_x_datetime(breaks = date_breaks("1 day"), 
+                   expand = c(0, 0),
+                   limits = c(
+                     ymd_hms("2019-01-21 00:00:00 AEST"),
+                     ymd_hms("2019-01-27 23:59:59 AEST"))) + 
   theme_minimal() + xlab("") + ylab("Counts")
+```
 
+Overview of four months, outbound
+
+```{r echo=FALSE, warning=FALSE}
+# p <- green_bridge %>%
+#   filter(direction == "outbound") %>%
+#   filter(type == "cyclists") %>%
+#   rename(date_time = date) %>% 
+#   mutate(weekday = strftime(date_time, format = "%A", tz = "Australia/Brisbane"),
+#          weekend = if_else(weekday %in% c("Saturday", "Sunday"), "Weekend", "Weekday"),
+#          date = as.Date(date_time, tz = "Australia/Brisbane"),
+#          time = as.numeric(format(date_time, "%H")) + as.numeric(format(date_time, "%M"))/60) %>%
+#   frame_calendar(x = time, y = count, date = date) %>% 
+#   ggplot(aes(x = .time, y = .count, group = date, colour = weekend)) +
+#   geom_line() +
+#   theme(legend.position = "none") + 
+#   theme_minimal()
+# 
+# prettify(p)
+```
+
+### Stocks on campus 
+
+#### Without modification
+
+```{r echo=FALSE}
+campus_gocard_agg_wide <- campus_gocard_agg %>% 
+  spread(INOUT, count) %>% 
+  replace_na(list(IN = 0, OUT = 0)) %>% 
+  rename(date = recorded_15, 
+         public_inbound = IN, public_outbound = OUT) %>% 
+  mutate(net = public_inbound - public_outbound ) %>% 
+  mutate(stock = cumsum(net)) 
+
+campus_gocard_agg_wide %>% 
+  ggplot(aes(x = date, y = stock)) + 
+  geom_line() + 
+  scale_x_datetime() + theme_minimal() + 
+  xlab("") + ylab("Stocks from PT counts")
+```
+
+#### With midnight 'reset'
+
+```{r echo=FALSE}
+campus_gocard_agg_wide <- campus_gocard_agg %>% 
+  spread(INOUT, count) %>% 
+  replace_na(list(IN = 0, OUT = 0)) %>% 
+  rename(date = recorded_15, 
+         public_inbound = IN, public_outbound = OUT) %>% 
+  mutate(net = public_inbound - public_outbound ) %>% 
+  group_by(date(date)) %>%
+  mutate(stock = cumsum(net)) %>% 
+  ungroup()
+
+campus_gocard_agg_wide %>% 
+  ggplot(aes(x = date, y = stock)) + 
+  geom_line() + 
+  scale_x_datetime() + theme_minimal() + 
+  xlab("") + ylab("Stocks from PT counts")
+```
+
+#### Frequency of stocks from whole period
+
+```{r echo=FALSE}
+campus_gocard_agg_wide %>% 
+  ggplot(aes(x = stock)) + 
+  geom_histogram(binwidth = 10) + 
+  theme_minimal() + 
+  xlab("") + ylab("PT stocks (corrected)") 
 ```
 
 <!-- ------------------------------------------------------------ --> 
