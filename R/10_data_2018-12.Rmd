@@ -15,7 +15,6 @@ output:
 ---
 
 <!-- ------------------------------------------------------------ --> 
-<!-- ------------------------------------------------------------ --> 
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = TRUE, fig.width=8, fig.height=6, dpi=300, out.width="800px", out.height="600px")
@@ -35,11 +34,13 @@ p_load(tidyverse, fs, here, readxl, magrittr, anytime, lubridate, sugrrants,
 tmap_mode("view") # makes map interactive
 
 campus_sf <- st_read(here::here("data", "geo", "MB_2016_QLD_campus.shp"), quiet = TRUE) %>% 
-    st_transform(3112) 
+  st_transform(3112) 
 
 # campus_sp <- readOGR(here::here("data", "geo", "MB_2016_QLD_campus.shp"))
 # campus_sp <- spTransform(campus_sp, CRS("+init=epsg:4326"))
 ```
+
+<!-- ------------------------------------------------------------ --> 
 
 # Time 
 
@@ -55,6 +56,8 @@ tm_shape(campus_sf) +
 ```
 
 Some official stats might be only available on SA2 level (`r as.character(campus_sf$SA2_MAIN16)` area `r as.character(campus_sf$SA2_NAME16)`)? But that will be problematic since it includes non-campus part of St Lucia.
+
+<!-- ------------------------------------------------------------ --> 
 
 # Census
 
@@ -78,6 +81,8 @@ From the Aug '16 UQ survey:
 
 > Collating information from the websites of each of the 10 residential colleges and Unilodge yielded a resident population of **2,747** for the St Lucia Campus as of August 2016. It is assumed that the resident population represents the overnight population of the campus.
 
+<!-- ------------------------------------------------------------ --> 
+
 # Cyclists & pedestrians
 
 Automatic & manual counts are available for Green Bridge. 
@@ -86,8 +91,8 @@ Automatic & manual counts are available for Green Bridge.
 
 ```{r eval=FALSE}
 green_bridge_15M <- read_excel("data/counters/raw/420_2019-03-25-11-00-05.xlsx", 
-                           col_types = c("date", "numeric", "numeric", 
-                                         "numeric", "numeric", "numeric", "numeric")) %>% 
+                               col_types = c("date", "numeric", "numeric", 
+                                             "numeric", "numeric", "numeric", "numeric")) %>% 
   clean_names() %>%
   remove_empty(c("rows", "cols")) %>% 
   select(-eleanor_schonell_bridge_cyclists_4g, -eleanor_schonell_bridge_pedestrians_4g) %>% 
@@ -163,7 +168,7 @@ Overview of four months, cyclists, outbound
 #     index = date, 
 #     regular = TRUE
 #   )
-  
+
 
 # green_bridge %>%
 #   filter(direction == "inbound") %>% 
@@ -194,6 +199,7 @@ p <- green_bridge %>%
 prettify(p)
 ```
 
+<!-- ------------------------------------------------------------ --> 
 
 # Traffic volume at intersection
 
@@ -265,7 +271,6 @@ bcc_traffic_8074_2019_02_2019_04 <-
 saveRDS(bcc_traffic_8074_2019_02_2019_04, "data/BCC/traffic_official/clean/bcc_traffic_8074_2019_02_2019_04.Rds")
 
 ```
-
 
 ```{r}
 bcc_traffic_8074_2018_12_2019_01 <- readRDS("data/BCC/traffic_official/clean/bcc_traffic_8074_2018_12_2019_01.Rds")
@@ -382,6 +387,232 @@ bcc_traffic_8074_long %>%
   xlab("") + ylab("Daily observations") 
 ```
 
+<!-- ------------------------------------------------------------ --> 
+
+# GoCard
+
+## Locations
+
+```{r, eval=FALSE}
+campus_sf <- st_read("data/geo/MB_2016_QLD_campus.shp", quiet = TRUE, stringsAsFactors = FALSE)
+
+stops <- read_csv("data/goCard/raw/stops.txt", 
+                  col_types = cols(
+                    stop_id = col_character()
+                  )) %>% 
+  st_as_sf(coords = c("stop_lon", "stop_lat"), crs = 4326) %>% 
+  st_transform(4283) 
+
+# qtm(stops)
+
+# campus_stops <- st_intersection(stops, select(st_buffer(campus_sf, 0.005), geometry))
+
+campus_stops <- st_intersection(stops, st_geometry(campus_sf)) %>% 
+  # filter(stop_name != "place_INTUQ" & stop_id != "place_UQLAKE") %>% 
+  filter(!str_detect(stop_name, fixed("Coldridge St")))
+
+temp <- stops %>% 
+  filter(stop_name == "UQ St Lucia ferry terminal") %>% 
+  st_as_sf(coords = c("stop_lon", "stop_lat"), crs = 4326) %>% 
+  st_transform(4283) 
+
+campus_stops <- do.call(rbind, list(campus_stops, temp))
+
+rm(temp)
+
+saveRDS(campus_stops, "data/goCard/clean/campus_stops.Rds")
+```
+
+Two 'clusters' of bus stops and ferry terminal:
+
+```{r}
+campus_stops <- readRDS("data/goCard/clean/campus_stops.Rds") %>% 
+  dplyr::filter(!is.na(stop_code)) %>% 
+  dplyr::select(-stop_code, -stop_desc, -zone_id, -location_type)
+
+qtm(campus_stops)
+```
+
+## Data
+
+```{r eval=FALSE, include=FALSE}
+# fist solution
+# library(utils)
+# library(stringr)
+# 
+# # Dashes in second row give column widths (I guess)
+# dashes <- '-------------------------------------------------- ----------------------- --------------- --------------- --------------- ------------------------------ ----------------------- ----------------------- ----------------------- --------------- --------------- --------------- --------------- ----------------------- ----------------------- ---------- --------------- --------------- -------------------------------------------------- -------------------- ------ --------------- ----------------- ----------------------------------------------------------------------------------------------------'
+# 
+# widths <- str_length(str_split(dashes, ' ')[[1]]) + 1 # +1 to count the gaps in between
+# widths[length(widths)] <- widths[length(widths)] - 1 # except for the last column
+# 
+# # File encoding removes the Byte Order Mark at the beginning and keeps things in line
+# head <- read.fwf('data/goCard/raw/test.txt', 
+#                  n = 1, stringsAsFactors = FALSE, 
+#                  header = FALSE, widths = widths, fileEncoding = "UTF-8-BOM", strip.white = TRUE)
+# 
+# 
+# data <- read.fwf('data/goCard/raw/test.txt', 
+#                 skip = 2, col.names = head, stringsAsFactors = FALSE, 
+#                 header = FALSE, widths = widths, fileEncoding = "UTF-8-BOM", strip.white = TRUE)
+# rm(head)
+# str(data)
+
+gocard_19_01 <- 
+  read_fwf('data/goCard/raw/01. UQJan2019.rpt', 
+           fwf_empty('data/goCard/raw/01. UQJan2019.rpt',
+                     col_names = c("operator", "operationsDate", "run", "route", "service", "direction", 
+                                   "scheduledstart", "actualstart", "actualend", 
+                                   "employeeID", "vehicle", "dcuCode", "ticketNumber", 
+                                   "boardingTime", "alightingTime", "passengers", 
+                                   "boarding_stop", "alighting_stop", 
+                                   "journeyID", "eis", "tripID", 
+                                   "originDevice", "destinationDevice", "ticketType")
+           ), skip = 2, na = c("", "NA", "NULL")) %>%  
+  rename(alighting_time = alightingTime,
+         boarding_time = boardingTime,
+         ticket_type = ticketType) %>% 
+  mutate(tripID = as.integer(tripID)) %>% 
+  arrange(journeyID, eis, tripID)
+
+saveRDS(gocard_19_01, "data/goCard/clean/gocard_19_01.Rds")
+
+# temp <- as.data.frame(table(gocard_19_01$ticket_type))
+```
+
+```{r include=FALSE}
+gocard_19_01 <- readRDS("data/goCard/clean/gocard_19_01.Rds") %>% 
+  dplyr::select(journeyID, eis, tripID,
+                alighting_stop, alighting_time,
+                boarding_stop, boarding_time,
+                ticket_type) 
+
+# temp <- gocard_19_01 %>% filter(tripID == 10) %>% dplyr::select(journeyID, eis) 
+# temp <- gocard_19_01 %>% filter(journeyID == 2019010407203662091846466, eis == 11529215047309111296) %>% arrange(tripID)
+
+temp <- gocard_19_01 %>% 
+  arrange(journeyID, eis, tripID) %>% 
+  group_by(journeyID, eis) %>% 
+  filter(row_number() == n())
+
+# table(temp$tripID)
+
+campus_in_19_01 <- campus_stops %>% 
+  st_drop_geometry() %>% 
+  dplyr::select(stop_id, stop_name) %>% 
+  left_join(temp, by = c("stop_id" = "alighting_stop")) %>% 
+  mutate(INOUT = "IN") %>% 
+  mutate(timestamp = alighting_time) %>% 
+  arrange(timestamp)
+
+temp <- gocard_19_01 %>% 
+  arrange(journeyID, eis, tripID) %>% 
+  group_by(journeyID, eis) %>% 
+  filter(row_number() == 1)
+
+# table(temp$tripID)
+
+campus_out_19_01 <- campus_stops %>% 
+  st_drop_geometry() %>% 
+  dplyr::select(stop_id, stop_name) %>% 
+  left_join(temp , by = c("stop_id" = "boarding_stop")) %>% 
+  mutate(INOUT = "OUT") %>% 
+  mutate(timestamp = boarding_time) %>% 
+  arrange(timestamp)
+
+campus_gocard <- bind_rows(campus_in_19_01, campus_out_19_01)
+
+campus_gocard$timestamp <- force_tz(campus_gocard$timestamp, "Australia/Brisbane")
+
+campus_gocard$recorded_15 <- ymd_hms(cut(campus_gocard$timestamp,
+                                         breaks = seq(ymd_hms("2019-01-01 00:00:00",
+                                                              tz = "Australia/Brisbane"),
+                                                      ymd_hms("2019-02-01 00:00:00",
+                                                              tz = "Australia/Brisbane"),
+                                                      as.difftime(15, units = "mins")),
+                                         # as.difftime(1, units = "hours")),
+                                         include.lowest = TRUE), tz = "Australia/Brisbane")
+
+# temp <- 
+#   campus_gocard %>% 
+#   group_by(recorded_15) %>% 
+#   summarise(min = min(timestamp),
+#             max = max(timestamp)) %>% 
+#   arrange(recorded_15) %>% 
+#   ungroup()
+
+temp <- 
+  campus_gocard %>% 
+  filter(is.na(recorded_15))
+
+campus_gocard %<>% 
+  filter(!is.na(recorded_15))
+
+rm(gocard_19_01, campus_in_19_01, campus_out_19_01)
+gc()
+```
+
+All the `r comma(nrow(campus_gocard))` goCard records with `alighting_stop` or `boarding_stop` variable equal to one of the locations indicated above were selected from Jan 2019 dataset. `alighting_stop` and `alighting_time` were used to get arrivals to campus and 
+`boarding_stop` on campus used `boarding_time` indicated departures:
+
+For `IN` traffic `alighting_time` was used as timestamp of event, and for `OUT` - `boarding_time`. 
+
+Data were aggregated to 15 min buckets.
+
+```{r}
+campus_gocard %>% 
+  dplyr::select(-stop_id, -boarding_stop, -alighting_stop) %>% 
+  slice(1:8)%>% 
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F)
+```
+
+## Results
+
+Ins & outs, last week of Jan
+
+```{r, warning=FALSE}
+# Summarizing these for two major types of `passenger_type` looks like:
+campus_gocard %>% 
+  filter(recorded_15 >= ymd_hms("2019-01-21 00:00:00 AEST") & 
+           recorded_15 <= ymd_hms("2019-01-27 23:59:59 AEST")) %>%
+  group_by(recorded_15, INOUT) %>% 
+  summarize(count = n()) %>% 
+  # filter(passenger_type %in% c("Adult", "Tertiary Student")) %>% 
+  # ggplot(aes(timestamp, ..count.., color = INOUT, linetype = passenger_type)) +
+  ggplot(aes(recorded_15, count, col = INOUT)) +
+  geom_line() + 
+  scale_x_datetime(breaks = date_breaks("1 day"), 
+                   expand = c(0, 0),
+                   limits = c(
+                     ymd_hms("2019-01-21 00:00:00 AEST"),
+                     ymd_hms("2019-01-27 23:59:59 AEST"))) + 
+  theme_minimal() + xlab("") + ylab("Counts")
+
+```
+
+Arrivals, complete dataset period
+
+```{r}
+p <- campus_gocard %>% 
+  filter(INOUT == "IN") %>%
+  group_by(recorded_15) %>% 
+  summarize(count = n()) %>% 
+  rename(date_time = recorded_15) %>% 
+  mutate(weekday = strftime(date_time, format = "%A", tz = "Australia/Brisbane"),
+         weekend = if_else(weekday %in% c("Saturday", "Sunday"), "Weekend", "Weekday"),
+         date = as.Date(date_time, tz = "Australia/Brisbane"),
+         time = as.numeric(format(date_time, "%H")) + as.numeric(format(date_time, "%M"))/60) %>%
+  frame_calendar(x = time, y = count, date = date) %>% 
+  ggplot(aes(x = .time, y = .count, group = date, colour = weekend)) +
+  geom_line() +
+  theme(legend.position = "none") + 
+  theme_minimal()
+
+prettify(p)
+```
+
+<!-- ------------------------------------------------------------ --> 
 
 # Twitter
 
@@ -467,12 +698,12 @@ saveRDS(campus_tweets_name, here::here("data", "Twitter", "clean", "campus_tweet
 
 # tweets of campus users, but posted outside campus
 campus_tweets_out <- bind_rows(select(campus_tweets_name, UID),
-                 st_drop_geometry(select(campus_tweets_geo, UID))) %>% 
+                               st_drop_geometry(select(campus_tweets_geo, UID))) %>% 
   unique() %>% 
   left_join(tweets_proc) %>% 
   anti_join(select(campus_tweets_geo, created_at, id_str)) %>% 
   anti_join(select(campus_tweets_name, created_at, id_str))
-  
+
 saveRDS(campus_tweets_out, here::here("data", "Twitter", "clean", "campus_tweets_out.Rds"))
 
 campus_tweets_out_agg <- campus_tweets_out %>% 
@@ -610,6 +841,8 @@ campus_tweets_out_name_agg %>%
 - data would need some cleaning
 
 
+<!-- ------------------------------------------------------------ --> 
+
 # Google places
 
 ## Locations
@@ -698,7 +931,7 @@ saveRDS(campus_places_times_long,
 ggplot(campus_places_times_long, aes(time, popularity, group = name)) +
   geom_line() + 
   theme_minimal() + xlab("Hour of the day (over week") + ylab("Popularity")
-  
+
 ```
 
 ## Limitations
@@ -707,6 +940,8 @@ ggplot(campus_places_times_long, aes(time, popularity, group = name)) +
 - it's all about popularity - so no real population measures for places - derive/find out/guestimate?
 - complete black box methodology
 
+
+<!-- ------------------------------------------------------------ --> 
 
 # Weather
 
@@ -740,7 +975,7 @@ uqweather <-  lapply(files, read_csv,
                      col_types = cols(Timestamp = col_datetime(format = "%Y/%m/%d %H:%M:%S"))) %>% 
   bind_rows() %>% 
   clean_names()
-  
+
 rm(files)
 gc()
 
@@ -750,7 +985,7 @@ saveRDS(uqweather, here::here("data", "uqweather", "clean", "uqweather.Rds"))
 ```{r}
 uqweather <- readRDS(here::here("data", "uqweather", "clean", "uqweather.Rds")) %>% 
   mutate(timestamp = force_tz(timestamp, tzone = "Australia/Brisbane")) %>% 
-    filter(timestamp >= ymd_hms("2018-10-08 00:00:00", tz = "Australia/Brisbane") & 
+  filter(timestamp >= ymd_hms("2018-10-08 00:00:00", tz = "Australia/Brisbane") & 
            timestamp <= ymd_hms("2019-03-24 23:59:59", tz = "Australia/Brisbane")) 
 
 # attr(uqweather$timestamp,"tzone")
@@ -762,7 +997,7 @@ Example from one day:
 
 ```{r}
 uqweather %>% 
-    filter(timestamp >= ymd_hms("2018-10-08 00:00:00", tz = "Australia/Brisbane") & 
+  filter(timestamp >= ymd_hms("2018-10-08 00:00:00", tz = "Australia/Brisbane") & 
            timestamp <= ymd_hms("2018-10-08 23:59:59", tz = "Australia/Brisbane")) %>% 
   ggplot(aes(x=timestamp, y=temp_mean_deg)) +
   scale_x_datetime() +
