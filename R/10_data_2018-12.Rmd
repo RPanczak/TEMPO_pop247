@@ -548,6 +548,14 @@ temp <-
 campus_gocard %<>% 
   filter(!is.na(recorded_15))
 
+saveRDS(campus_gocard, "data/goCard/clean/campus_gocard.Rds")
+
+campus_gocard_agg <- campus_gocard %>% 
+  group_by(recorded_15, INOUT) %>% 
+  summarize(count = n()) 
+  
+saveRDS(campus_gocard_agg, "data/goCard/clean/campus_gocard_agg.Rds")
+
 rm(gocard_19_01, campus_in_19_01, campus_out_19_01)
 gc()
 ```
@@ -557,11 +565,17 @@ All the `r comma(nrow(campus_gocard))` goCard records with `alighting_stop` or `
 
 For `IN` traffic `alighting_time` was used as timestamp of event, and for `OUT` - `boarding_time`. 
 
+```{r}
+campus_gocard_agg %>% 
+  slice(1:4) %>% 
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F)
+```
+
 Data were aggregated to 15 min buckets.
 
 ```{r}
 campus_gocard %>% 
-  dplyr::select(-stop_id, -boarding_stop, -alighting_stop) %>% 
   slice(1:8)%>% 
   kable() %>%
   kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F)
@@ -573,11 +587,9 @@ Ins & outs, last week of Jan
 
 ```{r, warning=FALSE}
 # Summarizing these for two major types of `passenger_type` looks like:
-campus_gocard %>% 
+campus_gocard_agg %>% 
   filter(recorded_15 >= ymd_hms("2019-01-21 00:00:00 AEST") & 
            recorded_15 <= ymd_hms("2019-01-27 23:59:59 AEST")) %>%
-  group_by(recorded_15, INOUT) %>% 
-  summarize(count = n()) %>% 
   # filter(passenger_type %in% c("Adult", "Tertiary Student")) %>% 
   # ggplot(aes(timestamp, ..count.., color = INOUT, linetype = passenger_type)) +
   ggplot(aes(recorded_15, count, col = INOUT)) +
@@ -588,7 +600,6 @@ campus_gocard %>%
                      ymd_hms("2019-01-21 00:00:00 AEST"),
                      ymd_hms("2019-01-27 23:59:59 AEST"))) + 
   theme_minimal() + xlab("") + ylab("Counts")
-
 ```
 
 Arrivals, complete dataset period
