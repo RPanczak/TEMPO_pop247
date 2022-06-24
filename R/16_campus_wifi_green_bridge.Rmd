@@ -61,7 +61,7 @@ knitr::opts_knit$set(width = 75)
 ## Original data
 
 ```{r echo=FALSE}
-green_bridge <- readRDS("data/counters/clean/green_bridge_15M.Rds") %>% 
+green_bridge <- readRDS("data/counters/clean/green_bridge.Rds") %>% 
   dplyr::select(-site) %>% 
   filter(date >= ymd_hms("2018-12-03 00:00:00", tz = "Australia/Brisbane")) %>% 
   filter(date <= ymd_hms("2019-01-27 23:59:59", tz = "Australia/Brisbane")) 
@@ -77,7 +77,6 @@ green_bridge %>%
   geom_line(aes(group = interaction(type, direction), color = type)) + 
   scale_x_datetime() + theme_minimal() + 
   xlab("") + ylab("Bike / pedestrian counts")
-
 ```
 
 Overview of months, cyclists, outbound
@@ -138,7 +137,6 @@ green_bridge_wide %>%
   xlab("") + ylab("Stocks from bike & pedestrian counts")
 ```
 
-
 Frequency of net from whole period
 
 ```{r echo=FALSE}
@@ -148,7 +146,6 @@ green_bridge_wide %>%
   theme_minimal() + 
   xlab("") + ylab("Wi-Fi users") 
 ```
-
 
 Frequency of stocks from whole period
 
@@ -160,20 +157,20 @@ green_bridge_wide %>%
   xlab("") + ylab("Wi-Fi users") 
 ```
 
+<!-- ------------------------------------------------------------ --> 
 
 # Wi-Fi
 
 ## Original data 
 
 ```{r echo=FALSE}
-prime_agg <- readRDS("R:/WIFIUQHPC-Q0766/data/clean/processed_prime_reports/prime_agg_3.Rds") %>% 
+prime_agg <- readRDS("../TEMPO_Wi-Fi/data/clean/processed_prime_reports/prime_agg_3.Rds") %>% 
   rename(date = prime_agg_3) %>% 
   filter(date >= ymd_hms("2018-12-03 00:00:00", tz = "Australia/Brisbane")) %>% 
   filter(date <= ymd_hms("2019-01-27 23:59:59", tz = "Australia/Brisbane")) 
   # filter(date <= ymd_hms("2019-03-25 23:59:59", tz = "Australia/Brisbane"))
 
 # tz(prime_agg$date)
-
 ```
 
 Detailed example counts for week of `2018-12-09` across type of data.
@@ -237,6 +234,8 @@ dev.off()
 rm(prime_agg_poi, prime_agg_nb)
 ```
 
+<!-- ------------------------------------------------------------ --> 
+
 # Time series comparisons
 
 ```{r echo=FALSE}
@@ -294,7 +293,6 @@ data %>%
   facet_wrap(~type, ncol = 1, scales = "free_y")
 ```
 
-
 ## Pedestrians 
 
 ### Inbound, connected users
@@ -325,7 +323,6 @@ data %>%
   facet_wrap(~type, ncol = 1, scales = "free_y")
 ```
 
-
 ## Stocks, connected users
 
 ```{r echo=FALSE}
@@ -340,7 +337,6 @@ data %>%
   facet_wrap(~type, ncol = 1, scales = "free_y")
 ```
 
-
 # Correlations, connected users 
 
 ```{r echo=FALSE}
@@ -352,8 +348,10 @@ M <- cor(dplyr::select(data, users_mac,
 corrplot.mixed(M)
 ```
 
+<!-- ------------------------------------------------------------ --> 
+# Models
 
-# INLA setup
+## INLA setup
 
 ```{r echo=TRUE, results=FALSE}
 # ####
@@ -393,8 +391,6 @@ hyper.prec = list(theta = list(
 inla.setOption(scale.model.default = TRUE)
 
 ```
-
-# Models
 
 ## RW1
 
@@ -632,6 +628,3 @@ dotchart(c(mod1$waic$waic, mod2$waic$waic, mod3$waic$waic,
            mod5$waic$waic, mod6$waic$waic, mod7$waic$waic),
          labels = c("mod1", "mod2", "mod3", "mod5", "mod6", "mod7"), main = "WAIC")
 ```
-
-
-
