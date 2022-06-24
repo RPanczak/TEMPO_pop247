@@ -20,7 +20,6 @@ knit: (function(inputFile, encoding) {
 ---
 
 <!-- ------------------------------------------------------------ --> 
-<!-- ------------------------------------------------------------ --> 
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = TRUE, fig.width=8, fig.height=6, dpi=300, out.width="800px", out.height="600px")
@@ -51,9 +50,13 @@ knitr::opts_chunk$set(cache = FALSE,
 knitr::opts_knit$set(width = 75)
 ```
 
+<!-- ------------------------------------------------------------ --> 
+
 # Time 
 
 August 2016 has been chosen to coincide with campus survey. 12th to 22nd August is the period with largest amount of data, limited by car counters.
+
+<!-- ------------------------------------------------------------ --> 
 
 # Location
 
@@ -73,6 +76,8 @@ tm_shape(campus_sf) +
 ```
 
 Some stats might be only available on SA2 level (`r as.character(campus_sf$SA2_MAIN16)` area `r as.character(campus_sf$SA2_NAME16)`)? But that will be problematic since it includes non-campus part of St Lucia.
+
+<!-- ------------------------------------------------------------ --> 
 
 # Census
 
@@ -95,6 +100,8 @@ Both resident and working pops can come split by characteristics covered in the 
 From the Aug UQ survey: 
 
 > Collating information from the websites of each of the 10 residential colleges and Unilodge yielded a resident population of **2,747** for the St Lucia Campus as of August 2016. It is assumed that the resident population represents the overnight population of the campus.
+
+<!-- ------------------------------------------------------------ --> 
 
 # Public transport
 
@@ -122,7 +129,6 @@ Assumptions & Limitations:
 - University of Queensland - Zone D [1797]
 - University of Queensland - Zone E [1802]
 6. Data reports on week 12th-29rd August 2016
-
 
 ## Locations
 
@@ -238,6 +244,7 @@ public_transport %>%
 
 No split between staff and student (as in goCard).
 
+<!-- ------------------------------------------------------------ --> 
 
 # Cyclists & pedestrians
 
@@ -246,7 +253,6 @@ No split between staff and student (as in goCard).
 Automatic & manual counts are available for locations 1 (bikes) and 9 (pedestrians & bikes):
 
 ![](../images/UQ_map_Observation_Points.jpg)
-
 ## Data - Green Bridge
 
 ```{r}
@@ -350,6 +356,7 @@ macquarie_bikes %>%
   xlab("") + ylab("Bike / pedestrian counts")
 ```
 
+<!-- ------------------------------------------------------------ --> 
 
 # Pneumatic car counts
 
@@ -604,6 +611,8 @@ vehicles_occupancy %>%
   xlab("") + ylab("Vehicle counts") +
   facet_wrap(~site, ncol = 1)
 ```
+
+<!-- ------------------------------------------------------------ --> 
 
 # Combining counts
 
