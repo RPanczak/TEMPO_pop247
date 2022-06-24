@@ -106,10 +106,10 @@ Automatic & manual counts are available for Green Bridge.
 
 ## Data
 
-```{r eval=FALSE}
-green_bridge_15M <- read_excel("data/counters/raw/420_2019-03-25-11-00-05.xlsx", 
-                               col_types = c("date", "numeric", "numeric", 
-                                             "numeric", "numeric", "numeric", "numeric")) %>% 
+```{r}
+green_bridge <- read_excel("data/counters/raw/420_2019-03-25-11-00-05.xlsx", 
+                           col_types = c("date", "numeric", "numeric", 
+                                         "numeric", "numeric", "numeric", "numeric")) %>% 
   clean_names() %>%
   remove_empty(c("rows", "cols")) %>% 
   select(-eleanor_schonell_bridge_cyclists_4g, -eleanor_schonell_bridge_pedestrians_4g) %>% 
@@ -124,31 +124,24 @@ green_bridge_15M <- read_excel("data/counters/raw/420_2019-03-25-11-00-05.xlsx",
   select(date, type, site, direction, count)%>% 
   filter(date >= lubridate::ymd_hm("2018-12-03 00:00", tz = "Australia/Brisbane")) %>% 
   arrange(date, type, site, direction)
-
-saveRDS(green_bridge_15M, "data/counters/clean/green_bridge_15M.Rds")
-
-# 1h aggregation
-# green_bridge_15M$recorded_cat <- ymd_hms(cut(green_bridge_15M$date,
-#                                              breaks = seq(ymd_hms("2018-10-08 00:00:00", 
-#                                                                   tz = "Australia/Brisbane"), 
-#                                                           ymd_hms("2019-01-28 00:00:00", 
-#                                                                   tz = "Australia/Brisbane"), 
-#                                                           # as.difftime(15, units = "mins")),
-#                                                           as.difftime(1, units = "hours")),
-#                                              include.lowest = TRUE), tz = "Australia/Brisbane")
-# 
-# green_bridge_60M <- green_bridge_15M %>%
-#   group_by(recorded_cat, type, site, direction) %>%
-#   summarise(count = sum(count)) %>%
-#   ungroup() %>%
-#   rename(date = recorded_cat)
-# 
-# saveRDS(green_bridge_60M, "data/counters/clean/green_bridge_60M.Rds")
-
 ```
 
-```{r}
-green_bridge <- readRDS("data/counters/clean/green_bridge_15M.Rds") 
+```{r eval=FALSE, include=FALSE}
+# 1h aggregation
+green_bridge$recorded_cat <- ymd_hms(cut(green_bridge_15M$date,
+                                         breaks = seq(ymd_hms("2018-10-08 00:00:00",
+                                                              tz = "Australia/Brisbane"),
+                                                      ymd_hms("2019-01-28 00:00:00",
+                                                              tz = "Australia/Brisbane"),
+                                                      # as.difftime(15, units = "mins")),
+                                                      as.difftime(1, units = "hours")),
+                                         include.lowest = TRUE), tz = "Australia/Brisbane")
+
+green_bridge <- green_bridge %>%
+  group_by(recorded_cat, type, site, direction) %>%
+  summarise(count = sum(count)) %>%
+  ungroup() %>%
+  rename(date = recorded_cat)
 ```
 
 15 minutes interval directional infrared counters for bikes and pedestrians (separately) from `r min(green_bridge$date)` to `r max(green_bridge$date)`. 
@@ -169,12 +162,11 @@ green_bridge %>%
   geom_line(aes(group = interaction(type, direction), color = direction, linetype = type)) + 
   scale_x_datetime() + theme_minimal() + 
   xlab("") + ylab("Bike / pedestrian counts")
-
 ```
 
 Overview of four months, cyclists, outbound
 
-```{r warning=FALSE}
+```{r eval=FALSE, warning=FALSE, include=FALSE}
 # library(tsibble)
 # 
 # green_bridge_tsbl <- green_bridge %>%
@@ -185,7 +177,6 @@ Overview of four months, cyclists, outbound
 #     index = date, 
 #     regular = TRUE
 #   )
-
 
 # green_bridge %>%
 #   filter(direction == "inbound") %>% 
@@ -198,7 +189,9 @@ Overview of four months, cyclists, outbound
 #   geom_line() +
 #   facet_calendar(~ date) + 
 #   theme(legend.position = "bottom")
+```
 
+```{r warning=FALSE}
 p <- green_bridge %>%
   filter(direction == "outbound") %>%
   filter(type == "cyclists") %>%
@@ -236,13 +229,11 @@ intersect <- jsonlite::fromJSON(here::here("data", "BCC", "traffic", "raw", "loc
            crs = 4326, agr = "constant")
 
 qtm(intersect)
-
 ```
 
 ## Data
 
 ```{r eval=FALSE, warning=FALSE, include=FALSE}
-
 # note >> skip used to read file from 1st Dec!
 bcc_traffic_8074_2018_12_2019_01 <- 
   read_table2("data/BCC/traffic_official/raw/B8074 15 Min Volumes Oct 18 to Jan 19.txt", 
@@ -286,7 +277,6 @@ bcc_traffic_8074_2019_02_2019_04 <-
          d7 = as.integer(d7), d8 = as.integer(d8), d9 = as.integer(d9)) 
 
 saveRDS(bcc_traffic_8074_2019_02_2019_04, "data/BCC/traffic_official/clean/bcc_traffic_8074_2019_02_2019_04.Rds")
-
 ```
 
 ```{r}
@@ -295,21 +285,21 @@ bcc_traffic_8074_2019_02_2019_04 <- readRDS("data/BCC/traffic_official/clean/bcc
 
 bcc_traffic_8074 <- bind_rows(bcc_traffic_8074_2018_12_2019_01, bcc_traffic_8074_2019_02_2019_04)
 
-saveRDS(bcc_traffic_8074, "data/BCC/traffic_official/clean/bcc_traffic_8074.Rds")
-
 rm(bcc_traffic_8074_2018_12_2019_01, bcc_traffic_8074_2019_02_2019_04)
+```
 
+```{r eval=FALSE, include=FALSE}
 # # 15 min to 1h intervals as posix
-# bcc_traffic_8074$recorded_60 <- ymd_hms(cut(bcc_traffic_8074$recorded,
-#                                             breaks = seq(ymd_hms("2018-09-10 00:00:00", 
-#                                                                  tz = "Australia/Brisbane"), 
-#                                                          ymd_hms("2019-01-28 00:00:00", 
-#                                                                  tz = "Australia/Brisbane"), 
-#                                                          as.difftime(1, units = "hours")),
-#                                             include.lowest = TRUE), tz = "Australia/Brisbane")
+bcc_traffic_8074$recorded_60 <- ymd_hms(cut(bcc_traffic_8074$recorded,
+                                            breaks = seq(ymd_hms("2018-09-10 00:00:00",
+                                                                 tz = "Australia/Brisbane"),
+                                                         ymd_hms("2019-01-28 00:00:00",
+                                                                 tz = "Australia/Brisbane"),
+                                                         as.difftime(1, units = "hours")),
+                                            include.lowest = TRUE), tz = "Australia/Brisbane")
 
 # intervals as character
-# bcc_traffic_8074$time_cat_str <- substr(as.character(bcc_traffic_8074$recorded_cat), 12, 16)
+bcc_traffic_8074$time_cat_str <- substr(as.character(bcc_traffic_8074$recorded_cat), 12, 16)
 ```
 
 BCC data on traffic counts aggregated to 15 min buckets. `r nrow(bcc_traffic_8074)` datapoints for the `8074` intersection are available from `r min(bcc_traffic_8074$recorded_15)` to `r max(bcc_traffic_8074$recorded_15)`. Available variable refers to overall 'minimum volumes' and is recorded by 9 detectors. 
@@ -410,7 +400,7 @@ bcc_traffic_8074_long %>%
 
 ## Locations
 
-```{r, eval=FALSE}
+```{r}
 campus_sf <- st_read("data/geo/MB_2016_QLD_campus.shp", quiet = TRUE, stringsAsFactors = FALSE)
 
 stops <- read_csv("data/goCard/raw/stops.txt", 
@@ -437,16 +427,14 @@ campus_stops <- do.call(rbind, list(campus_stops, temp))
 
 rm(temp)
 
-saveRDS(campus_stops, "data/goCard/clean/campus_stops.Rds")
+campus_stops <- campus_stops %>% 
+  dplyr::filter(!is.na(stop_code)) %>% 
+  dplyr::select(-stop_code, -stop_desc, -zone_id, -location_type)
 ```
 
 Two 'clusters' of bus stops and ferry terminal:
 
 ```{r}
-campus_stops <- readRDS("data/goCard/clean/campus_stops.Rds") %>% 
-  dplyr::filter(!is.na(stop_code)) %>% 
-  dplyr::select(-stop_code, -stop_desc, -zone_id, -location_type)
-
 qtm(campus_stops)
 ```
 
@@ -497,7 +485,7 @@ saveRDS(gocard_19_01, "data/goCard/clean/gocard_19_01.Rds")
 # temp <- as.data.frame(table(gocard_19_01$ticket_type))
 ```
 
-```{r include=FALSE}
+```{r eval=FALSE}
 gocard_19_01 <- readRDS("data/goCard/clean/gocard_19_01.Rds") %>% 
   dplyr::select(journeyID, eis, tripID,
                 alighting_stop, alighting_time,
@@ -570,11 +558,17 @@ saveRDS(campus_gocard, "data/goCard/clean/campus_gocard.Rds")
 campus_gocard_agg <- campus_gocard %>% 
   group_by(recorded_15, INOUT) %>% 
   summarize(count = n()) 
-  
+
 saveRDS(campus_gocard_agg, "data/goCard/clean/campus_gocard_agg.Rds")
 
 rm(gocard_19_01, campus_in_19_01, campus_out_19_01)
 gc()
+```
+
+```{r include=FALSE}
+campus_gocard <- readRDS("data/goCard/clean/campus_gocard.Rds")
+campus_gocard_agg <- readRDS("data/goCard/clean/campus_gocard_agg.Rds") %>% 
+  ungroup()
 ```
 
 All the `r comma(nrow(campus_gocard))` goCard records with `alighting_stop` or `boarding_stop` variable equal to one of the locations indicated above were selected from Jan 2019 dataset. `alighting_stop` and `alighting_time` were used to get arrivals to campus and 
@@ -584,7 +578,7 @@ For `IN` traffic `alighting_time` was used as timestamp of event, and for `OUT` 
 
 ```{r}
 campus_gocard_agg %>% 
-  slice(1:4) %>% 
+  slice(1:5) %>% 
   kable() %>%
   kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F)
 ```
@@ -593,7 +587,7 @@ Data were aggregated to 15 min buckets.
 
 ```{r}
 campus_gocard %>% 
-  slice(1:8)%>% 
+  slice(1:4) %>% 
   kable() %>%
   kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = F)
 ```
@@ -766,7 +760,6 @@ campus_tweets_name <- readRDS(here::here("data", "Twitter", "clean", "campus_twe
 campus_tweets_out <- readRDS(here::here("data", "Twitter", "clean", "campus_tweets_out.Rds"))
 campus_tweets_out_agg <- readRDS(here::here("data", "Twitter", "clean", "campus_tweets_out_agg.Rds"))
 campus_tweets_out_name_agg <- readRDS(here::here("data", "Twitter", "clean", "campus_tweets_out_name_agg.Rds"))
-
 ```
 
 ## Geocoded data
@@ -818,12 +811,9 @@ campus_tweets %<>%
   select(-created_at_hod_notz, -created_at_hod, -created_at) %>% 
   select(UID, created_at_tz, everything())
 
-saveRDS(campus_tweets, here::here("data", "Twitter", "clean", "campus_tweets.Rds"))
-
 rm(campus_tweets_geo, campus_tweets_geo_agg, campus_tweets_name_agg, campus_tweets_name)
 gc()
 ```
-
 
 ## Combined data
 
@@ -866,8 +856,7 @@ campus_tweets_out_name_agg %>%
 
 ## Limitations
 
-- data would need some cleaning
-
+Data would need some cleaning ...
 
 <!-- ------------------------------------------------------------ --> 
 
@@ -875,7 +864,7 @@ campus_tweets_out_name_agg %>%
 
 ## Locations
 
-```{r, include=FALSE}
+```{r, eval=FALSE}
 # scrape_dates.0 sems to be the same as detail_collection_dates.0
 places <- read_csv("./data/google_places/raw/export0.csv") %>% 
   dplyr::select(-detail_data.0.url, -detail_data.0.website, -detail_data.0.formatted_phone_number, 
@@ -909,16 +898,18 @@ saveRDS(campus_places_times,
         here::here("data", "google_places", "clean", "campus_places_times.Rds"))
 ```
 
+```{r include=FALSE}
+campus_places <- readRDS(here::here("data", "google_places", "clean", "campus_places.Rds"))
+campus_places_times <- readRDS(here::here("data", "google_places", "clean", "campus_places_times.Rds"))
+```
+
 Google Places dataset contains data for popularity of places scraped from Google Maps between `r min(campus_places$scrape_dates.0)` and `r max(campus_places$scrape_dates.0)`. Popularity is an arbitrary measure of 0-100 for each hour of each day of the week:
 
-![](images/popularity_regular.PNG)
+![](../images/popularity_regular.PNG)
 
 There are `r nrow(campus_places_times) + nrow(campus_places)` places on teh campus, however only `r nrow(campus_places_times)` have any information about popularity: 
 
 ```{r}
-rm(campus_places)
-gc()
-
 qtm(campus_places_times, text = "name")
 ```
 
@@ -953,13 +944,9 @@ campus_places_times_long <- campus_places_times %>%
   mutate(tod = time - ((dow -1) * 24)) %>% 
   arrange(name, time) 
 
-saveRDS(campus_places_times_long, 
-        here::here("data", "google_places", "clean", "campus_places_times_long.Rds"))
-
 ggplot(campus_places_times_long, aes(time, popularity, group = name)) +
   geom_line() + 
   theme_minimal() + xlab("Hour of the day (over week") + ylab("Popularity")
-
 ```
 
 ## Limitations
@@ -968,11 +955,9 @@ ggplot(campus_places_times_long, aes(time, popularity, group = name)) +
 - it's all about popularity - so no real population measures for places - derive/find out/guestimate?
 - complete black box methodology
 
-
 <!-- ------------------------------------------------------------ --> 
 
 # Weather
-
 
 ```{r eval=FALSE, include=FALSE}
 ## Daily averages
@@ -996,7 +981,7 @@ NOAA %>%
 
 From `uqweather` station (http://ww2.sees.uq.edu.au/uqweather/). 
 
-```{r}
+```{r eval=FALSE}
 files <- dir("./data/uqweather/raw/", recursive = TRUE, full.names = TRUE, pattern = "\\.csv$")
 
 uqweather <-  lapply(files, read_csv, 
@@ -1058,6 +1043,3 @@ uqweather %>%
   geom_line() + theme_minimal() + 
   xlab("") + ylab("Rain intensity [mm/h]")
 ```
-
-
-
