@@ -197,7 +197,6 @@ Only small amount of places has any information on popularity, with a tiny fract
 frq(places, popular_any)
 ```
 
-<br>
 **Note:** From this point forward only places with any information on popular times will be analyzed. 
 
 ```{r select_write_long, include=FALSE}
