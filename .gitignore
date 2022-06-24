@@ -5,7 +5,6 @@
 animations/
 archive/
 data/
-docs/
 graphs/
 images/
 misc/
@@ -15,4 +14,3 @@ utils/
 *_files
 *_cache
 tmp/
-SyncToy*
