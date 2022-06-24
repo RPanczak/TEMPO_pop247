@@ -1,6 +1,6 @@
 ---
-title: "POP247 - data catalogue"
-subtitle: "Pilot for St Lucia campus Aug 2016"
+title: "POP247"
+subtitle: "Data for St Lucia campus Aug 2016"
 author: "Radoslaw Panczak"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 mainfont: DejaVu Sans
