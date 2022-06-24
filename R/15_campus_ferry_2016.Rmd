@@ -1,12 +1,11 @@
 ---
-title: "POP247 - campus EDA"
+title: "POP247"
 subtitle: "Modelling ferry terminal with Google Places"
-# author: "Radoslaw Panczak"
+author: "Radoslaw Panczak"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 mainfont: DejaVu Sans
 output: 
   html_document: 
-    # css: custom.css
     toc: true
     toc_depth: 4
     toc_float: true
@@ -19,7 +18,6 @@ knit: (function(inputFile, encoding) {
   rmarkdown::render(inputFile, encoding = encoding, output_dir = "../docs") })
 ---
 
-<!-- ------------------------------------------------------------ --> 
 <!-- ------------------------------------------------------------ --> 
 
 ```{r setup, include=FALSE}
@@ -54,6 +52,8 @@ knitr::opts_chunk$set(cache = FALSE,
 knitr::opts_knit$set(width = 75)
 ```
 
+<!-- ------------------------------------------------------------ --> 
+
 # Ferry passengers
 
 ```{r echo=FALSE}
@@ -81,7 +81,8 @@ uq_ferry$date_cat <- ymd_hms(cut(uq_ferry$date,
 
 uq_ferry %<>% 
   group_by(date_cat, direction) %>% 
-  summarise(count = sum(count))
+  summarise(count = sum(count)) %>% 
+  ungroup()
 
 uq_ferry %>% 
   mutate(count = ifelse(test = direction == "outbound", yes = -1 * count, no = count)) %>%
@@ -91,7 +92,6 @@ uq_ferry %>%
   scale_x_datetime() + theme_minimal() + 
   xlab("") + ylab("People* counts") +
   geom_hline(yintercept = 0) # + coord_polar()
-
 ```
 
 ## Distribution of counts
@@ -110,6 +110,7 @@ uq_ferry %>%
 
 Note: not all hours are represented; missing values are filled with zeroes below.
 
+<!-- ------------------------------------------------------------ --> 
 
 # Google places
 
@@ -164,6 +165,7 @@ uq_ferry_places <- bind_cols(date_cat = rep(seq(ymd_hms("2016-08-15 00:00:00",
 rm(uq_ferry)
 ```
 
+<!-- ------------------------------------------------------------ --> 
 
 # EDA
 
@@ -195,7 +197,6 @@ uq_ferry_places_agg %>%
   scale_x_datetime() + theme_minimal() + 
   xlab("") + ylab("Hourly passenger counts") + 
   geom_line(aes(y = popularity), col = "red") 
-
 ```
 
 ### Distribution of counts
@@ -226,7 +227,6 @@ gofstat(list(ferry_poi, ferry_nb), fitnames = c("Poisson", "negative binomial"))
 dev.off()
 ```
 
-
 ```{r eval=FALSE, include=FALSE}
 #### LOESS smoother
 L1 <- loess(count ~ time, data = uq_ferry_places_agg, span = 0.1)
@@ -236,7 +236,6 @@ plot(x = uq_ferry_places_agg$time, y = uq_ferry_places_agg$count)
 lines(uq_ferry_places_agg$time, PL1$fit)
 lines(uq_ferry_places_agg$time, PL1$fit + 2*PL1$se.fit, lty = 2)
 lines(uq_ferry_places_agg$time, PL1$fit - 2*PL1$se.fit, lty = 2)
-
 ```
 
 ```{r eval=FALSE, include=FALSE}
@@ -293,8 +292,6 @@ uq_ferry_places_dep$time <- uq_ferry_places_dep$time - min(uq_ferry_places_dep$t
 
 rm(uq_ferry_places)
 
-saveRDS(uq_ferry_places_dep, "data/counters/clean/uq_ferry_places_dep.Rds")
-
 uq_ferry_places_dep %>% 
   ggplot(aes(x = date_cat, y = count)) + 
   geom_col() + 
@@ -341,7 +338,6 @@ plot(x = uq_ferry_places_dep$time, y = uq_ferry_places_dep$count)
 lines(uq_ferry_places_dep$time, PL1$fit)
 lines(uq_ferry_places_dep$time, PL1$fit + 2*PL1$se.fit, lty = 2)
 lines(uq_ferry_places_dep$time, PL1$fit - 2*PL1$se.fit, lty = 2)
-
 ```
 
 ```{r eval=FALSE, include=FALSE}
@@ -398,8 +394,6 @@ uq_ferry_places_arr$time <- uq_ferry_places_arr$time - min(uq_ferry_places_arr$t
 
 rm(uq_ferry_places)
 
-saveRDS(uq_ferry_places_arr, "data/counters/clean/uq_ferry_places_arr.Rds")
-
 uq_ferry_places_arr %>% 
   ggplot(aes(x = date_cat, y = count)) + 
   geom_col() + 
@@ -455,6 +449,8 @@ glm.nb(count ~ time, data = uq_ferry_places_arr)
 glm.nb(count ~ popularity, data = uq_ferry_places_arr)
 glm.nb(count ~ time + popularity, data = uq_ferry_places_arr)
 ```
+
+<!-- ------------------------------------------------------------ --> 
 
 # GAMs
 
@@ -600,7 +596,6 @@ ggplot(P4res, aes(x = x)) +
   geom_point(aes(y = y), alpha = 0.5) +
   theme_minimal() + ylab("Counts") + xlab("Time")
 ```
-
 
 ## Departures 
 
@@ -885,6 +880,7 @@ ggplot(P4res, aes(x = x)) +
   theme_minimal() + ylab("Counts") + xlab("Time")
 ```
 
+<!-- ------------------------------------------------------------ --> 
 
 # INLA
 
@@ -934,7 +930,9 @@ inla.setOption(scale.model.default = TRUE)
 ### Two time smoothers (rw1)
 
 ```{r}
-mod1 <- inla(count ~ f(time, model = "rw1", hyper = hyper.prec) + f(hod, model = "rw1", hyper = hyper.prec), 
+mod1 <- inla(count ~ 
+               f(time, model = "rw1", hyper = hyper.prec) + 
+               f(hod, model = "rw1", hyper = hyper.prec), 
              family = "nbinomial", 
              control.compute = list(dic= TRUE, waic = TRUE),  
              data = uq_ferry_places_agg)
@@ -952,7 +950,9 @@ P1_fit <- mod1$summary.fitted.values
 ### Two time smoothers (rw2)
 
 ```{r}
-mod2 <- inla(count ~ f(time, model = "rw2", hyper = hyper.prec) + f(hod, model = "rw2", hyper = hyper.prec), 
+mod2 <- inla(count ~ 
+               f(time, model = "rw2", hyper = hyper.prec) + 
+               f(hod, model = "rw2", hyper = hyper.prec), 
              family = "nbinomial", 
              control.compute = list(dic= TRUE, waic = TRUE),  
              data = uq_ferry_places_agg)
@@ -970,7 +970,10 @@ P2_fit <- mod2$summary.fitted.values
 ### Two time smoothers + smooth covariate (rw1)
 
 ```{r}
-mod3 <- inla(count ~ f(popularity, model = "rw1", hyper = hyper.prec) + f(time, model = "rw1", hyper = hyper.prec) + f(hod, model = "rw1", hyper = hyper.prec), 
+mod3 <- inla(count ~ 
+               f(popularity, model = "rw1", hyper = hyper.prec) + 
+               f(time, model = "rw1", hyper = hyper.prec) + 
+               f(hod, model = "rw1", hyper = hyper.prec), 
              family = "nbinomial", 
              control.compute = list(dic= TRUE, waic = TRUE),  
              data = uq_ferry_places_agg)
@@ -988,7 +991,10 @@ autoplot(mod3)
 ### Two time smoothers + smooth covariate (rw2)
 
 ```{r}
-mod4 <- inla(count ~ f(popularity, model = "rw2", hyper = hyper.prec) + f(time, model = "rw2", hyper = hyper.prec) + f(hod, model = "rw2", hyper = hyper.prec), 
+mod4 <- inla(count ~ 
+               f(popularity, model = "rw2", hyper = hyper.prec) + 
+               f(time, model = "rw2", hyper = hyper.prec) + 
+               f(hod, model = "rw2", hyper = hyper.prec), 
              family = "nbinomial", 
              control.compute = list(dic= TRUE, waic = TRUE),  
              data = uq_ferry_places_agg)
@@ -1040,7 +1046,9 @@ ggplot(P3_fit, aes(x = x)) +
 ### Two time smoothers (rw1)
 
 ```{r}
-mod1 <- inla(count ~ f(time, model = "rw1", hyper = hyper.prec) + f(hod, model = "rw1", hyper = hyper.prec), 
+mod1 <- inla(count ~ 
+               f(time, model = "rw1", hyper = hyper.prec) + 
+               f(hod, model = "rw1", hyper = hyper.prec), 
              family = "nbinomial", 
              control.compute = list(dic= TRUE, waic = TRUE),  
              data = uq_ferry_places_dep)
@@ -1058,7 +1066,9 @@ P1_fit <- mod1$summary.fitted.values
 ### Two time smoothers (rw2)
 
 ```{r}
-mod2 <- inla(count ~ f(time, model = "rw2", hyper = hyper.prec) + f(hod, model = "rw2", hyper = hyper.prec), 
+mod2 <- inla(count ~ 
+               f(time, model = "rw2", hyper = hyper.prec) + 
+               f(hod, model = "rw2", hyper = hyper.prec), 
              family = "nbinomial", 
              control.compute = list(dic= TRUE, waic = TRUE),  
              data = uq_ferry_places_dep)
@@ -1076,7 +1086,10 @@ P2_fit <- mod2$summary.fitted.values
 ### Two time smoothers + smooth covariate (rw1)
 
 ```{r}
-mod3 <- inla(count ~ f(popularity, model = "rw1", hyper = hyper.prec) + f(time, model = "rw1", hyper = hyper.prec) + f(hod, model = "rw1", hyper = hyper.prec), 
+mod3 <- inla(count ~ 
+               f(popularity, model = "rw1", hyper = hyper.prec) + 
+               f(time, model = "rw1", hyper = hyper.prec) + 
+               f(hod, model = "rw1", hyper = hyper.prec), 
              family = "nbinomial", 
              control.compute = list(dic= TRUE, waic = TRUE),  
              data = uq_ferry_places_dep)
@@ -1094,7 +1107,10 @@ P3_fit <- mod3$summary.fitted.values
 ### Two time smoothers + smooth covariate (rw2)
 
 ```{r}
-mod4 <- inla(count ~ f(popularity, model = "rw2", hyper = hyper.prec) + f(time, model = "rw2", hyper = hyper.prec) + f(hod, model = "rw2", hyper = hyper.prec), 
+mod4 <- inla(count ~ 
+               f(popularity, model = "rw2", hyper = hyper.prec) + 
+               f(time, model = "rw2", hyper = hyper.prec) + 
+               f(hod, model = "rw2", hyper = hyper.prec), 
              family = "nbinomial", 
              control.compute = list(dic= TRUE, waic = TRUE),  
              data = uq_ferry_places_dep)
@@ -1146,7 +1162,9 @@ ggplot(P3_fit, aes(x = x)) +
 ### Two time smoothers (rw1)
 
 ```{r}
-mod1 <- inla(count ~ f(time, model = "rw1", hyper = hyper.prec) + f(hod, model = "rw1", hyper = hyper.prec), 
+mod1 <- inla(count ~ 
+               f(time, model = "rw1", hyper = hyper.prec) + 
+               f(hod, model = "rw1", hyper = hyper.prec), 
              family = "nbinomial", 
              control.compute = list(dic= TRUE, waic = TRUE),  
              data = uq_ferry_places_arr)
@@ -1164,7 +1182,9 @@ P1_fit <- mod1$summary.fitted.values
 ### Two time smoothers (rw2)
 
 ```{r}
-mod2 <- inla(count ~ f(time, model = "rw2", hyper = hyper.prec) + f(hod, model = "rw2", hyper = hyper.prec), 
+mod2 <- inla(count ~ 
+               f(time, model = "rw2", hyper = hyper.prec) + 
+               f(hod, model = "rw2", hyper = hyper.prec), 
              family = "nbinomial", 
              control.compute = list(dic= TRUE, waic = TRUE),  
              data = uq_ferry_places_arr)
@@ -1182,7 +1202,10 @@ P2_fit <- mod2$summary.fitted.values
 ### Two time smoothers + smooth covariate (rw1)
 
 ```{r Imod3a, include=FALSE}
-mod3 <- inla(count ~ f(popularity, model = "rw1", hyper = hyper.prec) + f(time, model = "rw1", hyper = hyper.prec) + f(hod, model = "rw1", hyper = hyper.prec), 
+mod3 <- inla(count ~ 
+               f(popularity, model = "rw1", hyper = hyper.prec) + 
+               f(time, model = "rw1", hyper = hyper.prec) + 
+               f(hod, model = "rw1", hyper = hyper.prec), 
              family = "nbinomial", 
              control.compute = list(dic= TRUE, waic = TRUE),  
              data = uq_ferry_places_arr)
@@ -1200,7 +1223,10 @@ P3_fit <- mod3$summary.fitted.values
 ### Two time smoothers + smooth covariate (rw2)
 
 ```{r}
-mod4 <- inla(count ~ f(popularity, model = "rw2", hyper = hyper.prec) + f(time, model = "rw2", hyper = hyper.prec) + f(hod, model = "rw2", hyper = hyper.prec), 
+mod4 <- inla(count ~ 
+               f(popularity, model = "rw2", hyper = hyper.prec) + 
+               f(time, model = "rw2", hyper = hyper.prec) + 
+               f(hod, model = "rw2", hyper = hyper.prec), 
              family = "nbinomial", 
              control.compute = list(dic= TRUE, waic = TRUE),  
              data = uq_ferry_places_arr)
