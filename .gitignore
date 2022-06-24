@@ -2,7 +2,6 @@
 .Rhistory
 .RData
 .Ruserdata
-animations/
 archive/
 data/
 graphs/
@@ -10,7 +9,5 @@ images/
 misc/
 conference/
 utils/
-*.html
 *_files
 *_cache
-tmp/
