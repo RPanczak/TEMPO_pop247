@@ -23,9 +23,6 @@ knit: (function(inputFile, encoding) {
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = TRUE, fig.width=8, fig.height=6, dpi=300, out.width="800px", out.height="600px")
 
-# knitr::opts_knit$set(root.dir = 'R:/POP247-Q0786/')
-# setwd('R:/POP247-Q0786/')
-
 set.seed(12345)
 options(scipen = 999)
 
@@ -42,6 +39,22 @@ campus_sf <- st_read(here::here("data", "geo", "MB_2016_QLD_campus.shp"), quiet 
 
 # campus_sp <- readOGR(here::here("data", "geo", "MB_2016_QLD_campus.shp"))
 # campus_sp <- spTransform(campus_sp, CRS("+init=epsg:4326"))
+```
+
+```{r conflicts, include = FALSE}
+tidyverse::tidyverse_conflicts()
+conflicted::conflict_scout()
+```
+
+```{r knit-setup, include = FALSE}
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+knitr::opts_chunk$set(cache = FALSE,
+                      prompt = FALSE,
+                      tidy = FALSE,
+                      comment = NA,
+                      message = FALSE,
+                      warning = FALSE)
+knitr::opts_knit$set(width = 75)
 ```
 
 <!-- ------------------------------------------------------------ --> 

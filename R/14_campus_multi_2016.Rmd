@@ -28,9 +28,6 @@ knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE,
                       out.width="800px", out.height="600px",
                       cache=TRUE)
 
-# knitr::opts_knit$set(root.dir = 'R:/POP247-Q0786/')
-# setwd('R:/POP247-Q0786/')
-
 set.seed(12345)
 options(scipen = 999)
 
@@ -38,7 +35,23 @@ library(pacman)
 p_load(tidyverse, magrittr, lubridate,
        scales, gghighlight, fitdistrplus, MASS, mgcv, gratia, INLA, INLAutils)
 
-inla.setOption(num.threads = 3) 
+inla.setOption(num.threads = 7) 
+```
+
+```{r conflicts, include = FALSE}
+tidyverse::tidyverse_conflicts()
+conflicted::conflict_scout()
+```
+
+```{r knit-setup, include = FALSE}
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+knitr::opts_chunk$set(cache = FALSE,
+                      prompt = FALSE,
+                      tidy = FALSE,
+                      comment = NA,
+                      message = FALSE,
+                      warning = FALSE)
+knitr::opts_knit$set(width = 75)
 ```
 
 # People counts

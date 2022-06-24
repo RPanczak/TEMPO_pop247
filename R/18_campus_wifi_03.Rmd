@@ -19,16 +19,12 @@ knit: (function(inputFile, encoding) {
 ---
 
 <!-- ------------------------------------------------------------ --> 
-<!-- ------------------------------------------------------------ --> 
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, 
                       fig.width=8, fig.height=6, dpi=300, 
                       out.width="800px", out.height="600px",
                       cache=FALSE)
-
-# knitr::opts_knit$set(root.dir = 'R:/POP247-Q0786/')
-# setwd('R:/POP247-Q0786/')
 
 set.seed(12345)
 options(scipen = 999)
@@ -42,12 +38,26 @@ p_load(tidyverse, magrittr, lubridate, corrplot, scales, sugrrants,
 tmap_mode("view")
 ```
 
-<!-- ------------------------------------------------------------ --> 
+```{r conflicts, include = FALSE}
+tidyverse::tidyverse_conflicts()
+conflicted::conflict_scout()
+```
+
+```{r knit-setup, include = FALSE}
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+knitr::opts_chunk$set(cache = FALSE,
+                      prompt = FALSE,
+                      tidy = FALSE,
+                      comment = NA,
+                      message = FALSE,
+                      warning = FALSE)
+knitr::opts_knit$set(width = 75)
+```
+
 <!-- ------------------------------------------------------------ --> 
 
 # Data
 
-<!-- ------------------------------------------------------------ --> 
 ## Pedestrian & bike counts
 
 ### Original data
@@ -140,7 +150,6 @@ green_bridge_wide %>%
 ```
 
 
-<!-- ------------------------------------------------------------ --> 
 ## Vehicle occupancy
 
 Few data points exist for observarions of car occupancy for weekday from the 2015 Survey (Tue 18th Aug).
@@ -179,7 +188,6 @@ lines(x = occupancy_weekend$timestamp, y = occupancy_weekend$out_loess, col = "r
 dev.off()
 ```
 
-<!-- ------------------------------------------------------------ --> 
 ## Vehicle counts
 
 Data from BCC traffic monitoring 
@@ -311,8 +319,6 @@ bcc_traffic_occupancy %>%
   xlab("") + ylab("Wi-Fi users") 
 ```
 
-<!-- ------------------------------------------------------------ --> 
-
 ## GoCard
 
 ```{r}
@@ -406,8 +412,6 @@ campus_gocard_agg_wide %>%
   theme_minimal() + 
   xlab("") + ylab("PT stocks (corrected)") 
 ```
-
-<!-- ------------------------------------------------------------ --> 
 
 ## Wi-Fi
 
@@ -550,7 +554,6 @@ uqweather %>%
   xlab("") + ylab("Rain intensity [mm/h]")
 ```
 
-<!-- ------------------------------------------------------------ --> 
 <!-- ------------------------------------------------------------ --> 
 
 # Time series comparisons
@@ -723,7 +726,6 @@ corrplot.mixed(M)
 rm(M)
 ```
 
-<!-- ------------------------------------------------------------ --> 
 <!-- ------------------------------------------------------------ --> 
 
 # Models

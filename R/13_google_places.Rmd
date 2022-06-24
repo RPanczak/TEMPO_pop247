@@ -42,6 +42,21 @@ library(xlsx)
 
 ```
 
+```{r conflicts, include = FALSE}
+tidyverse::tidyverse_conflicts()
+conflicted::conflict_scout()
+```
+
+```{r knit-setup, include = FALSE}
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+knitr::opts_chunk$set(cache = FALSE,
+                      prompt = FALSE,
+                      tidy = FALSE,
+                      comment = NA,
+                      message = FALSE,
+                      warning = FALSE)
+knitr::opts_knit$set(width = 75)
+```
 
 ## Introduction 
 
@@ -53,7 +68,7 @@ The results focus on places where 'popular times' were available.
 
 The exact algorithm on how this 'popularity' is determined is, of course, **unknown**.
 
-![Best case scenario? Caltex Woolworths Stafford petrol station](images/popularity_regular.png)
+![Best case scenario? Caltex Woolworths Stafford petrol station](../images/popularity_regular.png)
 
 ## Raw data
 
@@ -78,8 +93,6 @@ places <- read_csv("./data/google_places/raw/export0.csv") %>%
          detail_data.0.reviews.3.time = anytime::anydate(detail_data.0.reviews.3.time, asUTC = TRUE),
          detail_data.0.reviews.4.time = anytime::anydate(detail_data.0.reviews.4.time, asUTC = TRUE)
   )
-
-# View(places)
 ```
 
 Raw dataset consists of: 
@@ -177,7 +190,6 @@ ggplot(hotels, aes(types.0)) +
   coord_flip()
 
 ggsave("./data/google_places/clean/hotels.png")
-
 ```
 
 Variables derived from original values include: 
@@ -192,9 +204,9 @@ Variables derived from original values include:
 
 ## No 'popular times'?
 
-![Legitimate?](images/popularity_closed.png)
+![Legitimate?](../images/popularity_closed.png)
 <br>
-![Not so good?](images/popularity_enough.png)
+![Not so good?](../images/popularity_enough.png)
 <br>
 
 ## Availability of 'popular times' 
@@ -279,7 +291,6 @@ sf_places_long <- st_as_sf(x = places_long,
                            crs = "+proj=longlat +datum=WGS84")
 
 sp_places_long <- as(sf_places_long, "Spatial")
-
 ```
 
 
@@ -348,7 +359,6 @@ ggplot(hotels, aes(types.0, popular_filled)) +
   geom_boxplot() +
   coord_flip() + 
   stat_summary(fun.data = give.n, geom = "text", fun.y = median) 
-  
 ```
 
 
@@ -365,7 +375,6 @@ clean_types <-  dplyr::select(clean_types, place_id, type)
 places  <- inner_join(places, clean_types)
 sort(table(places$type), decreasing=TRUE)
 length(unique(places$type))
-
 ```
 
 ```{r table_type, echo=FALSE}
@@ -571,7 +580,6 @@ setwd("./")
 
 See Animations for better impression...
 
-
 ## Temporal signatures of places (1)
 
 ```{r temp_graph_1, echo=FALSE}
@@ -609,7 +617,6 @@ ggsave("./R/graphs/google_places_popularity_food_drink.png", dpi = 300, width = 
 
 rm(subset)
 rm(subset_long)
-
 ```
 
 
@@ -773,7 +780,6 @@ ggsave("./R/graphs/google_places_popularity_other.png", dpi = 300, width = 297, 
 
 rm(subset)
 rm(subset_long)
-
 ```
 
 ## TODO

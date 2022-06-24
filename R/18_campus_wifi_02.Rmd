@@ -19,7 +19,6 @@ knit: (function(inputFile, encoding) {
 ---
 
 <!-- ------------------------------------------------------------ --> 
-<!-- ------------------------------------------------------------ --> 
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, 
@@ -41,12 +40,25 @@ p_load(tidyverse, magrittr, lubridate, corrplot, scales, sugrrants,
 
 ```
 
-<!-- ------------------------------------------------------------ --> 
+```{r conflicts, include = FALSE}
+tidyverse::tidyverse_conflicts()
+conflicted::conflict_scout()
+```
+
+```{r knit-setup, include = FALSE}
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+knitr::opts_chunk$set(cache = FALSE,
+                      prompt = FALSE,
+                      tidy = FALSE,
+                      comment = NA,
+                      message = FALSE,
+                      warning = FALSE)
+knitr::opts_knit$set(width = 75)
+```
+
 <!-- ------------------------------------------------------------ --> 
 
 # Data
-
-<!-- ------------------------------------------------------------ --> 
 
 ## Pedestrian & bike counts
 
@@ -151,7 +163,6 @@ green_bridge_wide %>%
 ```
 
 
-<!-- ------------------------------------------------------------ --> 
 ## Vehicle occupancy
 
 Few data points exist for observarions of car occupancy for weekday from the 2015 Survey (Tue 18th Aug).
@@ -191,7 +202,6 @@ lines(x = occupancy_weekend$timestamp, y = occupancy_weekend$out_loess, col = "r
 dev.off()
 ```
 
-<!-- ------------------------------------------------------------ --> 
 ## Vehicle counts
 
 Data from BCC traffic monitoring 
@@ -336,8 +346,6 @@ bcc_traffic_occupancy %>%
 ```
 
 
-<!-- ------------------------------------------------------------ --> 
-
 ## Wi-Fi
 
 ### Original data 
@@ -462,7 +470,6 @@ uqweather %>%
   xlab("") + ylab("Rain intensity [mm/h]")
 ```
 
-<!-- ------------------------------------------------------------ --> 
 <!-- ------------------------------------------------------------ --> 
 
 # Time series comparisons
@@ -646,7 +653,6 @@ M <- cor(dplyr::select(data, users_mac,
 corrplot.mixed(M)
 ```
 
-<!-- ------------------------------------------------------------ --> 
 <!-- ------------------------------------------------------------ --> 
 
 # Models
