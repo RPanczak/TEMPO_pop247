@@ -1,12 +1,11 @@
 ---
-title: "POP247 - campus EDA"
+title: "POP247"
 subtitle: "Models for St Lucia - sites & modes of transport"
-# author: "Radoslaw Panczak"
+author: "Radoslaw Panczak"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 mainfont: DejaVu Sans
 output: 
   html_document: 
-    # css: custom.css
     toc: true
     toc_depth: 4
     toc_float: true
@@ -189,7 +188,6 @@ campus %>%
   xlab("") + ylab("People* counts") # + geom_hline(yintercept = 0) 
 ```
 
-
 ### Pedestrians & cyclists
 
 ```{r echo=FALSE}
@@ -210,7 +208,6 @@ green_bridge, pedestrians, outbound massive outliers:
 
 2016-08-20 07:45:00
 265
-
 
 ## Distribution of counts
 
@@ -244,8 +241,9 @@ dev.off()
 rm(campus_inbound_poi, campus_inbound_nb)
 ```
 
-
 # INLA
+
+Modelling inbound traffic 
 
 ## Setup
 
@@ -288,15 +286,11 @@ campus_inbound$site_type <- as.character(interaction(campus_inbound$type, campus
 campus_outbound$site_type <- as.character(interaction(campus_outbound$type, campus_outbound$site, drop = TRUE, sep = " "))
 
 levels(campus_inbound$site_type)
-
 ```
 
+## RW1
 
-## Inbound 
-
-### RW1
-
-#### One trend for all time series (rw1)
+### One trend for all time series (rw1)
 
 ```{r}
 mod1 <- inla(count ~ site_type + 
@@ -336,7 +330,7 @@ ggplot(P1, aes(x = count, y = fit)) +
   theme_minimal() + xlab("Counts")  + ylab("fitted")  
 ```
 
-#### One trend for mode of transport (rw1)
+### One trend for mode of transport (rw1)
 
 ```{r}
 inla.setOption(scale.model.default = TRUE)
@@ -349,7 +343,7 @@ campus_inbound$vehicles <- as.numeric(campus_inbound$type == "vehicles")
 campus_inbound$time2 <- campus_inbound$time
 campus_inbound$time3 <- campus_inbound$time
 campus_inbound$time4 <- campus_inbound$time
-  
+
 mod2 <- inla(count ~ site_type + 
                f(time, cyclists, model = "rw1", hyper = hyper.prec) + 
                f(time2, pedestrians, model = "rw1", hyper = hyper.prec) + 
@@ -388,10 +382,9 @@ ggplot(P2, aes(x = count, y = fit)) +
   geom_point(alpha = 0.5) +
   facet_wrap(~site_type) +
   theme_minimal() + xlab("Counts")  + ylab("fitted")
-  
 ```
 
-#### One trend for site (rw1)
+### One trend for site (rw1)
 
 ```{r}
 campus_inbound$Chancellors <- as.numeric(campus_inbound$site == "Chancellors")
@@ -410,7 +403,7 @@ campus_inbound$time5 <- campus_inbound$time
 campus_inbound$time6 <- campus_inbound$time
 campus_inbound$time7 <- campus_inbound$time
 campus_inbound$time8 <- campus_inbound$time
-  
+
 mod3 <- inla(count ~ site_type + 
                f(time, Chancellors, model = "rw1", hyper = hyper.prec) + 
                f(time2, ferry, model = "rw1", hyper = hyper.prec) + 
@@ -453,10 +446,9 @@ ggplot(P3, aes(x = count, y = fit)) +
   geom_point(alpha = 0.5) +
   facet_wrap(~site_type) +
   theme_minimal() + xlab("Counts")  + ylab("fitted")
-  
 ```
 
-#### One trend for mode & site (rw1)
+### One trend for mode & site (rw1)
 
 ```{r}
 campus_inbound$cyclists_green_bridge <- as.numeric(campus_inbound$site_type == "cyclists green_bridge")
@@ -470,7 +462,7 @@ campus_inbound$vehicles_McGregor <- as.numeric(campus_inbound$site_type == "vehi
 campus_inbound$vehicles_Schonell <- as.numeric(campus_inbound$site_type == "vehicles Schonell")
 
 campus_inbound$time9 <- campus_inbound$time
-  
+
 mod4 <- inla(count ~ site_type + 
                f(time, cyclists_green_bridge, model = "rw1", hyper = hyper.prec) + 
                f(time2, cyclists_Macquarie, model = "rw1", hyper = hyper.prec) + 
@@ -516,9 +508,9 @@ ggplot(P4, aes(x = count, y = fit)) +
   theme_minimal() + xlab("Counts")  + ylab("fitted")
 ```
 
-### RW2 
+## RW2 
 
-#### One trend for all time series (rw2)
+### One trend for all time series (rw2)
 
 ```{r}
 mod5 <- inla(count ~ site_type + 
@@ -558,7 +550,7 @@ ggplot(P5, aes(x = count, y = fit)) +
   theme_minimal() + xlab("Counts")  + ylab("fitted")  
 ```
 
-#### One trend for mode of transport (rw2)
+### One trend for mode of transport (rw2)
 
 ```{r}
 inla.setOption(scale.model.default = TRUE)
@@ -571,7 +563,7 @@ campus_inbound$vehicles <- as.numeric(campus_inbound$type == "vehicles")
 campus_inbound$time2 <- campus_inbound$time
 campus_inbound$time3 <- campus_inbound$time
 campus_inbound$time4 <- campus_inbound$time
-  
+
 mod6 <- inla(count ~ site_type + 
                f(time, cyclists, model = "rw2", hyper = hyper.prec) + 
                f(time2, pedestrians, model = "rw2", hyper = hyper.prec) + 
@@ -610,10 +602,10 @@ ggplot(P6, aes(x = count, y = fit)) +
   geom_point(alpha = 0.5) +
   facet_wrap(~site_type) +
   theme_minimal() + xlab("Counts")  + ylab("fitted")
-  
+
 ```
 
-#### One trend for site (rw2)
+### One trend for site (rw2)
 
 ```{r}
 campus_inbound$Chancellors <- as.numeric(campus_inbound$site == "Chancellors")
@@ -632,7 +624,7 @@ campus_inbound$time5 <- campus_inbound$time
 campus_inbound$time6 <- campus_inbound$time
 campus_inbound$time7 <- campus_inbound$time
 campus_inbound$time8 <- campus_inbound$time
-  
+
 mod7 <- inla(count ~ site_type + 
                f(time, Chancellors, model = "rw2", hyper = hyper.prec) + 
                f(time2, ferry, model = "rw2", hyper = hyper.prec) + 
@@ -675,10 +667,10 @@ ggplot(P7, aes(x = count, y = fit)) +
   geom_point(alpha = 0.5) +
   facet_wrap(~site_type) +
   theme_minimal() + xlab("Counts")  + ylab("fitted")
-  
+
 ```
 
-#### One trend for mode & site (rw2)
+### One trend for mode & site (rw2)
 
 ```{r}
 campus_inbound$cyclists_green_bridge <- as.numeric(campus_inbound$site_type == "cyclists green_bridge")
@@ -692,7 +684,7 @@ campus_inbound$vehicles_McGregor <- as.numeric(campus_inbound$site_type == "vehi
 campus_inbound$vehicles_Schonell <- as.numeric(campus_inbound$site_type == "vehicles Schonell")
 
 campus_inbound$time9 <- campus_inbound$time
-  
+
 mod8 <- inla(count ~ site_type + 
                f(time, cyclists_green_bridge, model = "rw2", hyper = hyper.prec) + 
                f(time2, cyclists_Macquarie, model = "rw2", hyper = hyper.prec) + 
@@ -738,7 +730,7 @@ ggplot(P8, aes(x = count, y = fit)) +
   theme_minimal() + xlab("Counts")  + ylab("fitted")
 ```
 
-### Comparing
+## Comparing
 
 ```{r}
 dotchart(c(mod1$dic$dic, mod2$dic$dic, mod3$dic$dic, mod4$dic$dic,
