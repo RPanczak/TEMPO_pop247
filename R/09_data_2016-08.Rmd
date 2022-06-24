@@ -25,9 +25,6 @@ knit: (function(inputFile, encoding) {
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = TRUE, fig.width=8, fig.height=6, dpi=300, out.width="800px", out.height="600px")
 
-# knitr::opts_knit$set(root.dir = 'R:/POP247-Q0786/')
-# setwd('R:/POP247-Q0786/')
-
 set.seed(12345)
 
 library(pacman) 
@@ -36,7 +33,22 @@ p_load(tidyverse, fs, here, readxl, magrittr, anytime, lubridate,
        sf, readabs, tmap, tmaptools)
 
 tmap_mode("view") # makes map interactive
+```
 
+```{r conflicts, include = FALSE}
+tidyverse::tidyverse_conflicts()
+conflicted::conflict_scout()
+```
+
+```{r knit-setup, include = FALSE}
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file())
+knitr::opts_chunk$set(cache = FALSE,
+                      prompt = FALSE,
+                      tidy = FALSE,
+                      comment = NA,
+                      message = FALSE,
+                      warning = FALSE)
+knitr::opts_knit$set(width = 75)
 ```
 
 # Time 
@@ -115,7 +127,7 @@ Assumptions & Limitations:
 
 ## Locations
 
-```{r, eval=FALSE}
+```{r}
 # //gpem-flowm/Projects/GoCard/Data/GoCard/SEQ_GTFS_161121/stops.txt
 stops <- read_csv("data/goCard/raw/stops.txt", 
                   col_types = cols(
@@ -137,17 +149,11 @@ temp <- stops %>%
 
 campus_stops <- do.call(rbind, list(campus_stops, temp)) %>% 
   filter(! stop_id %in% c("place_INTUQ", "place_UQLAKE"))
-
-rm(temp)
-
-saveRDS(campus_stops, "data/goCard/clean/campus_stops.Rds")
-
 ```
 
 Two 'clusters' of bus stops and ferry terminal:
 
 ```{r}
-campus_stops <- readRDS("data/goCard/clean/campus_stops.Rds")
 qtm(campus_stops)
 ```
 
@@ -155,6 +161,7 @@ qtm(campus_stops)
 
 ```{r, eval=FALSE}
 # "//gpem-atlas2/QCPR/Projects/UQPFD - Campus Population Estimates/2016/Analysis_Lauren/Final/Bus_CityCat_Data for the week.xlsx
+
 public_transport <- read_excel("data/buses/raw/Bus_CityCat_Data for the week.xlsx", 
                                sheet = "Stop Utilisation", 
                                col_types = c("text", "text", 
@@ -192,9 +199,7 @@ public_transport <- read_excel("data/buses/raw/Bus_CityCat_Data for the week.xls
   rename(date = time_from)
 
 saveRDS(public_transport, "data/buses/clean/public_transport.Rds")
-
 ```
-
 
 ```{r}
 public_transport <- readRDS("data/buses/clean/public_transport.Rds") %>% 
@@ -241,7 +246,7 @@ No split between staff and student (as in goCard).
 
 Automatic & manual counts are available for locations 1 (bikes) and 9 (pedestrians & bikes):
 
-![](UQ_map_Observation_Points.jpg)
+![](../images/UQ_map_Observation_Points.jpg)
 
 ## Data - Green Bridge
 
@@ -349,7 +354,6 @@ macquarie_bikes %>%
   geom_line(aes(group = interaction(type, direction), color = direction, linetype = type)) + 
   scale_x_datetime() + theme_minimal() + 
   xlab("") + ylab("Bike / pedestrian counts")
-
 ```
 
 
@@ -450,7 +454,6 @@ sites in 15 minutes intervals. `r nrow(vehicles)` records from `r min(vehicles$d
 slice(vehicles, 1:5)
 ```
 
-
 ## Average vehicle occupancy
 
 ### Weekday
@@ -512,7 +515,6 @@ plot(x = occupancy_week$timestamp, y = occupancy_week$out_avg, ylim=c(1, 1.4),
 lines(x = occupancy_week$timestamp, y = occupancy_week$out_loess, col = "red")
 
 saveRDS(occupancy_week, "data/counters/clean/occupancy_week.Rds")
-
 ```
 
 ### Weekend
@@ -573,7 +575,6 @@ saveRDS(occupancy_weekend, "data/counters/clean/occupancy_weekend.Rds")
 
 ```
 
-
 ## Corrected counts
 
 Counts of cars were corrected with average occupancy for week/weekends and rounded to integers.
@@ -602,9 +603,7 @@ vehicles_occupancy <- vehicles %>%
   select(date, type, site, direction, count)
 
 saveRDS(vehicles_occupancy, "data/counters/clean/vehicles_occupancy.Rds")
-
 ```
-
 
 ## Results - Chancellors, Schonell, McGregor
 
@@ -619,7 +618,6 @@ vehicles_occupancy %>%
   scale_x_datetime() + theme_minimal() + 
   xlab("") + ylab("Vehicle counts") +
   facet_wrap(~site, ncol = 1)
-
 ```
 
 # Combining counts
@@ -643,7 +641,6 @@ uq_campus_long %>%
   xlab("") + ylab("People* counts") + 
   geom_hline(yintercept = 0)
 
-
 # uq_campus_long %>% 
 #   filter(date >= ymd_hms("2016-08-16 04:00:00", tz = "Australia/Brisbane")) %>% 
 #   filter(date <= ymd_hms("2016-08-16 23:59:59", tz = "Australia/Brisbane")) %>% 
@@ -652,7 +649,6 @@ uq_campus_long %>%
 #   scale_x_datetime() + theme_minimal() + 
 #   xlab("") + ylab("People* counts") +
 #   facet_wrap(~direction, ncol = 1)
-
 ```
 
 Ignoring transport mode, example of one day:
@@ -669,8 +665,6 @@ uq_campus_long %>%
   geom_hline(yintercept = 0)
 
 saveRDS(uq_campus_long, "data/counters/clean/uq_campus_long.Rds")
-# write_csv(uq_campus_long, "data/counters/clean/uq_campus_long.csv")
-
 ```
 
 
@@ -690,14 +684,11 @@ uq_campus_wide <- uq_campus_long %>%
 #   mutate(stock = cumsum(net))
 
 saveRDS(uq_campus_wide, "data/counters/clean/uq_campus_wide.Rds")
-# write_csv(uq_campus_wide, "data/counters/clean/uq_campus_wide.csv")
-
 ```
-
 
 ## Stocks on campus 
 
-Calculated by mode & site without modifications 
+Calculated by mode & site without modifications  
 
 ```{r echo=FALSE}
 uq_campus_long %>% 
@@ -719,6 +710,3 @@ uq_campus_long %>%
   xlab("") + ylab("Stocks from bike & pedestrian counts") + 
   facet_wrap(~Mode)
 ```
-
-
-
