@@ -1,0 +1,99 @@
+# Twitter
+
+## CSIRO data
+
+### Preparation
+
+```{r}
+ids_csiro <- read_csv("../data/Twitter/raw/uq.dat", 
+                         col_names = FALSE) %>% 
+  rename(tweet_id = X1) %>% 
+  mutate(tweet_id = as.character(tweet_id))
+```
+
+`r number(nrow(ids_csiro), accuracy = 1, big.mark = ",")` tweet IDs were provided by CSIRO
+
+```{r eval=FALSE, include=FALSE}
+# setup_twitter_oauth(...)
+
+# code from 
+# https://stackoverflow.com/questions/26645672/how-to-retrieve-multiple-tweets-from-tweet-id-using-r
+lookupStatus <- function (ids, ...){
+  lapply(ids, twitteR:::check_id)
+
+  batches <- split(ids, ceiling(seq_along(ids)/100))
+
+  results <- lapply(batches, function(batch) {
+    params <- parseIDs(batch)
+    statuses <- twitteR:::twInterfaceObj$doAPICall(paste("statuses", "lookup", 
+                                                         sep = "/"),
+                                                   params = params, ...)
+    twitteR:::import_statuses(statuses)
+  })
+  return(unlist(results))
+}
+
+parseIDs <- function(ids){
+  id_list <- list()
+  if (length(ids) > 0) {
+    id_list$id <- paste(ids, collapse = ",")
+  }
+  return(id_list)
+}
+
+# ids <- c("762372566732378112", "762420485585895424")
+# tweets <- lookupStatus(ids, retryOnRateLimit = 100)
+
+tweets <- lookupStatus(ids_csiro$tweet_id, retryOnRateLimit = 100)
+
+head(tweets)
+
+tweets_csiro <- twListToDF(tweets) %>% 
+  arrange(created)
+
+tweets_csiro$created_tz = with_tz(tweets_csiro$created, tzone = "Australia/Brisbane")
+
+head(tweets_csiro)
+
+saveRDS(tweets_csiro, "data/Twitter/clean/tweets_csiro.Rds") 
+
+rm(tweets, ids_csiro)
+```
+
+### Results
+```{r}
+tweets_csiro <- readRDS("../data/Twitter/clean/tweets_csiro.Rds") 
+```
+
+`r number(nrow(tweets_csiro), accuracy = 1, big.mark = ",")` tweets were found on Twitter.
+
+```{r}
+tweets_csiro_geo <- tweets_csiro %>% 
+  filter(!is.na(longitude)) %>% 
+  filter(!is.na(latitude)) %>% 
+  mutate(longitude = as.numeric(longitude),
+         latitude = as.numeric(latitude)) %>% 
+  st_as_sf(coords = c("longitude", "latitude"), crs = 4326) %>% 
+  st_transform(3112) 
+```
+
+`r number(nrow(tweets_csiro_geo), accuracy = 1, big.mark = ",")` tweets were found on Twitter.
+
+Quick map:
+
+```{r}
+qtm(tweets_csiro_geo)
+```
+
+Histogram:
+
+```{r}
+tweets_csiro_geo %>% 
+  dplyr::select(created_tz) %>% 
+  mutate(date = as.Date(created_tz)) %>% 
+  ggplot() +
+  geom_histogram(aes(date), binwidth = 1) +
+  scale_x_date(date_breaks = "1 week", date_minor_breaks = "1 day") + 
+  theme_minimal()
+```
+

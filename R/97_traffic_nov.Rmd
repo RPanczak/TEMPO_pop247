@@ -12,15 +12,14 @@ One might be too far from campus.
 intersect <- jsonlite::fromJSON(here::here("data", "BCC", "traffic", "raw", "locations",
                                            "Intersection_locations_reference.json"), 
                                 flatten = TRUE) %>% 
-  select(tsc, coordinates.latLng.latitude, coordinates.latLng.longitude,
+  dplyr::select(tsc, coordinates.latLng.latitude, coordinates.latLng.longitude,
          region, suburb) %>% 
-  filter(!is.na(coordinates.latLng.longitude) & !is.na(coordinates.latLng.latitude)) %>%
-  filter(tsc %in% c(8074, 878, 90)) %>%
+  dplyr::filter(!is.na(coordinates.latLng.longitude) & !is.na(coordinates.latLng.latitude)) %>%
+  dplyr::filter(tsc %in% c(8074, 878, 90)) %>%
   st_as_sf(., coords = c("coordinates.latLng.longitude", "coordinates.latLng.latitude"), 
            crs = 4326, agr = "constant")
 
 qtm(intersect)
-
 ```
 
 ## Data
@@ -30,22 +29,21 @@ bcc_traffic_8074 <-
   read_table2("data/BCC/traffic_official/raw/B8074 15 Min Volumes November 2018.txt", 
               col_names = c("time", paste0("v", 1:19)),
               skip = 0) %>% 
-  rename(d1 = v3, d2 = v4, d3 = v5, 
+  dplyr::rename(d1 = v3, d2 = v4, d3 = v5, 
          d4 = v6, d5 = v7, d6 = v8, 
          d7 = v9, d8 = v10, d9 = v11) %>% 
-  mutate(date = ifelse(test = v2 == "November", yes = paste0("2018-11-", v1), no = NA)) %>% 
-  select(-v1, -v2, -v12, -v13, - v14, - v15, -v16, -v17, -v18, -v19) %>% 
-  fill(date) %>% 
-  filter(time != "Approach") %>% 
-  filter(grepl(":",time)) %>% 
-  mutate(recorded_15 = anytime(paste0(date, " ", time, ":00"), tz = "Australia/Brisbane") - 15*60) %>% 
-  select(recorded_15, everything(), - date, -time) %>% 
-  mutate(d1 = as.integer(d1),  d2 = as.integer(d2), d3 = as.integer(d3),
+  dplyr::mutate(date = ifelse(test = v2 == "November", yes = paste0("2018-11-", v1), no = NA)) %>% 
+  dplyr::select(-v1, -v2, -v12, -v13, - v14, - v15, -v16, -v17, -v18, -v19) %>% 
+  tidyr::fill(date) %>% 
+  dplyr::filter(time != "Approach") %>% 
+  dplyr::filter(grepl(":",time)) %>% 
+  dplyr::mutate(recorded_15 = anytime(paste0(date, " ", time, ":00"), tz = "Australia/Brisbane") - 15*60) %>% 
+  dplyr::select(recorded_15, everything(), - date, -time) %>% 
+  dplyr::mutate(d1 = as.integer(d1),  d2 = as.integer(d2), d3 = as.integer(d3),
          d4 = as.integer(d4), d5 = as.integer(d5), d6 = as.integer(d6),
          d7 = as.integer(d7), d8 = as.integer(d8), d9 = as.integer(d9)) 
 
-saveRDS(bcc_traffic_8074, "data/BCC/traffic_official/clean/bcc_traffic_8074.Rds")
-
+# saveRDS(bcc_traffic_8074, "data/BCC/traffic_official/clean/bcc_traffic_8074.Rds")
 ```
 
 
@@ -96,7 +94,7 @@ bcc_traffic_8074_long %>%
   geom_line() + 
   scale_x_datetime() + theme_minimal() + 
   xlab("") + ylab("Traffic volume") +
-  facet_wrap(~direction, ncol = 1)
+  facet_wrap(vars(direction), ncol = 1)
 ```
 
 Ignoring lines, one week
@@ -114,7 +112,7 @@ bcc_traffic_agg_8074_long %>%
   geom_col() +
   scale_x_datetime() + theme_minimal() + 
   xlab("") + ylab("Traffic volume") +
-  facet_wrap(~direction, ncol = 1)
+  facet_wrap(vars(direction), ncol = 1)
 ```
 
 Inbound traffic, whole study period
