@@ -124,11 +124,13 @@ green_bridge <- read_excel("data/counters/raw/420_2019-03-25-11-00-05.xlsx",
   select(date, type, site, direction, count)%>% 
   filter(date >= lubridate::ymd_hm("2018-12-03 00:00", tz = "Australia/Brisbane")) %>% 
   arrange(date, type, site, direction)
+
+saveRDS(green_bridge, "data/counters/clean/green_bridge.Rds") 
 ```
 
 ```{r eval=FALSE, include=FALSE}
 # 1h aggregation
-green_bridge$recorded_cat <- ymd_hms(cut(green_bridge_15M$date,
+green_bridge$recorded_cat <- ymd_hms(cut(green_bridge$date,
                                          breaks = seq(ymd_hms("2018-10-08 00:00:00",
                                                               tz = "Australia/Brisbane"),
                                                       ymd_hms("2019-01-28 00:00:00",
