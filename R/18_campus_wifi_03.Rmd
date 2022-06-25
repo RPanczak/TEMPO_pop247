@@ -1,5 +1,5 @@
 ---
-title: "POP247 - campus EDA"
+title: "POP247"
 subtitle: "Models for St Lucia - Wi-Fi counts with pedestrians, cyclists & vehicles"
 author: "Radoslaw Panczak"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
@@ -34,7 +34,7 @@ p_load(tidyverse, magrittr, lubridate, corrplot, scales, sugrrants,
        sf, tmap,
        fitdistrplus, INLA, INLAutils, gganimate)
 
-# inla.setOption(num.threads = 1) 
+inla.setOption(num.threads = 8)
 tmap_mode("view")
 ```
 
@@ -62,8 +62,8 @@ knitr::opts_knit$set(width = 75)
 
 ### Original data
 
-```{r echo=FALSE}
-green_bridge <- readRDS("data/counters/clean/green_bridge_15M.Rds") %>% 
+```{r}
+green_bridge <- readRDS("data/counters/clean/green_bridge.Rds") %>% 
   dplyr::select(-site) %>% 
   filter(date >= ymd_hms("2018-12-03 00:00:00", tz = "Australia/Brisbane")) %>% 
   filter(date <= ymd_hms("2019-03-24 23:59:59", tz = "Australia/Brisbane")) 
@@ -79,7 +79,6 @@ green_bridge %>%
   geom_line(aes(group = interaction(type, direction), color = type)) + 
   scale_x_datetime() + theme_minimal() + 
   xlab("") + ylab("Bike / pedestrian counts")
-
 ```
 
 Overview of four months, cyclists, outbound
@@ -106,13 +105,15 @@ prettify(p)
 
 #### Without modification
 
-```{r echo=FALSE}
+```{r}
 green_bridge_wide <- green_bridge %>% 
   unite(temp, type, direction) %>%
   spread(temp, count) %>% 
   mutate(net = cyclists_inbound - cyclists_outbound + pedestrians_inbound - pedestrians_outbound) %>% 
-  mutate(stock = cumsum(net)) 
+  mutate(stock = cumsum(net))
+```
 
+```{r echo=FALSE}
 green_bridge_wide %>% 
   ggplot(aes(x = date, y = stock)) + 
   geom_line() + 
@@ -122,7 +123,7 @@ green_bridge_wide %>%
 
 #### With midnight 'reset'
 
-```{r echo=FALSE}
+```{r}
 green_bridge_wide <- green_bridge %>% 
   unite(temp, type, direction) %>%
   spread(temp, count) %>% 
@@ -130,14 +131,15 @@ green_bridge_wide <- green_bridge %>%
   group_by(date(date)) %>%
   mutate(stock = cumsum(net)) %>% 
   ungroup()
+```
 
+```{r echo=FALSE}
 green_bridge_wide %>% 
   ggplot(aes(x = date, y = stock)) + 
   geom_line() + 
   scale_x_datetime() + theme_minimal() + 
   xlab("") + ylab("Stocks from bike & pedestrian counts")
 ```
-
 
 #### Frequency of stocks from whole period
 
@@ -149,10 +151,9 @@ green_bridge_wide %>%
   xlab("") + ylab("Wi-Fi users") 
 ```
 
-
 ## Vehicle occupancy
 
-Few data points exist for observarions of car occupancy for weekday from the 2015 Survey (Tue 18th Aug).
+Few data points exist for observations of car occupancy for weekday from the 2015 Survey (Tue 18th Aug).
 
 Better data are available for weekend occupancy of cars from 13th Aug 2016.
 
@@ -163,7 +164,7 @@ occupancy_week <- readRDS("data/counters/clean/occupancy_week.Rds")
 occupancy_weekend <- readRDS("data/counters/clean/occupancy_weekend.Rds")
 ```
 
-```{r}
+```{r echo=FALSE}
 par(mfrow=c(2,2))
 
 plot(x = occupancy_week$timestamp, y = occupancy_week$in_avg, ylim=c(1, 1.4),
@@ -181,7 +182,6 @@ lines(x = occupancy_weekend$timestamp, y = occupancy_weekend$in_loess, col = "re
 plot(x = occupancy_weekend$timestamp, y = occupancy_weekend$out_avg, ylim=c(1, 1.75),
      main = "Occupancy - weekend out", xlab = "", ylab = "Occupancy")
 lines(x = occupancy_weekend$timestamp, y = occupancy_weekend$out_loess, col = "red")
-
 ```
 
 ```{r include=FALSE}
@@ -241,7 +241,6 @@ bcc_traffic_occupancy <- bcc_traffic %>%
   ) %>% 
   mutate(net = inbound - outbound) %>% 
   dplyr::select(-in_loess_week, -in_loess_weekend, -out_loess_week, -out_loess_weekend)
-
 ```
 
 Detailed example counts for week of `2018-12-03` across type and direction. Both original counts (`_orig` suffix on legend) and counts corrected with occupancy are plotted.
@@ -257,7 +256,6 @@ bcc_traffic_occupancy %>%
   geom_line(aes(group = direction, color = direction)) + 
   scale_x_datetime() + theme_minimal() + 
   xlab("") + ylab("Vehicle counts")
-
 ```
 
 Overview of four months, inbound
@@ -282,10 +280,12 @@ prettify(p)
 
 #### Without modification
 
-```{r echo=FALSE}
+```{r}
 bcc_traffic_occupancy <- bcc_traffic_occupancy %>%
-  mutate(stock = cumsum(net)) 
+  mutate(stock = cumsum(net))
+```
 
+```{r echo=FALSE}
 bcc_traffic_occupancy %>% 
   ggplot(aes(x = date, y = stock)) + 
   geom_line() + 
@@ -295,19 +295,20 @@ bcc_traffic_occupancy %>%
 
 #### With midnight 'reset'
 
-```{r echo=FALSE}
+```{r}
 bcc_traffic_occupancy <- bcc_traffic_occupancy %>%
   group_by(date(date)) %>%
   mutate(stock = cumsum(net)) %>% 
   ungroup()
+```
 
+```{r echo=FALSE}
 bcc_traffic_occupancy %>% 
   ggplot(aes(x = date, y = stock)) + 
   geom_line() + 
   scale_x_datetime() + theme_minimal() + 
   xlab("") + ylab("Stocks of vehicles")
 ```
-
 
 #### Frequency of stocks from whole period
 
@@ -322,7 +323,8 @@ bcc_traffic_occupancy %>%
 ## GoCard
 
 ```{r}
-campus_gocard_agg <- readRDS("data/goCard/clean/campus_gocard_agg.Rds")
+campus_gocard_agg <- readRDS("data/goCard/clean/campus_gocard_agg.Rds") %>% 
+  ungroup()
 ```
 
 ### Original data
@@ -346,36 +348,37 @@ campus_gocard_agg %>%
 Overview of four months, outbound
 
 ```{r echo=FALSE, warning=FALSE}
-# p <- green_bridge %>%
-#   filter(direction == "outbound") %>%
-#   filter(type == "cyclists") %>%
-#   rename(date_time = date) %>% 
-#   mutate(weekday = strftime(date_time, format = "%A", tz = "Australia/Brisbane"),
-#          weekend = if_else(weekday %in% c("Saturday", "Sunday"), "Weekend", "Weekday"),
-#          date = as.Date(date_time, tz = "Australia/Brisbane"),
-#          time = as.numeric(format(date_time, "%H")) + as.numeric(format(date_time, "%M"))/60) %>%
-#   frame_calendar(x = time, y = count, date = date) %>% 
-#   ggplot(aes(x = .time, y = .count, group = date, colour = weekend)) +
-#   geom_line() +
-#   theme(legend.position = "none") + 
-#   theme_minimal()
-# 
-# prettify(p)
+p <- campus_gocard_agg %>%
+  filter(INOUT == "OUT") %>%
+  rename(date_time = recorded_15) %>%
+  mutate(weekday = strftime(date_time, format = "%A", tz = "Australia/Brisbane"),
+         weekend = if_else(weekday %in% c("Saturday", "Sunday"), "Weekend", "Weekday"),
+         date = as.Date(date_time, tz = "Australia/Brisbane"),
+         time = as.numeric(format(date_time, "%H")) + as.numeric(format(date_time, "%M"))/60) %>%
+  frame_calendar(x = time, y = count, date = date) %>%
+  ggplot(aes(x = .time, y = .count, group = date, colour = weekend)) +
+  geom_line(alpha = 0.5) +
+  theme(legend.position = "none") +
+  theme_minimal()
+
+prettify(p)
 ```
 
 ### Stocks on campus 
 
 #### Without modification
 
-```{r echo=FALSE}
+```{r}
 campus_gocard_agg_wide <- campus_gocard_agg %>% 
   spread(INOUT, count) %>% 
   replace_na(list(IN = 0, OUT = 0)) %>% 
   rename(date = recorded_15, 
          public_inbound = IN, public_outbound = OUT) %>% 
   mutate(net = public_inbound - public_outbound ) %>% 
-  mutate(stock = cumsum(net)) 
+  mutate(stock = cumsum(net))
+```
 
+```{r echo=FALSE}
 campus_gocard_agg_wide %>% 
   ggplot(aes(x = date, y = stock)) + 
   geom_line() + 
@@ -385,7 +388,7 @@ campus_gocard_agg_wide %>%
 
 #### With midnight 'reset'
 
-```{r echo=FALSE}
+```{r}
 campus_gocard_agg_wide <- campus_gocard_agg %>% 
   spread(INOUT, count) %>% 
   replace_na(list(IN = 0, OUT = 0)) %>% 
@@ -395,7 +398,9 @@ campus_gocard_agg_wide <- campus_gocard_agg %>%
   group_by(date(date)) %>%
   mutate(stock = cumsum(net)) %>% 
   ungroup()
+```
 
+```{r echo=FALSE}
 campus_gocard_agg_wide %>% 
   ggplot(aes(x = date, y = stock)) + 
   geom_line() + 
@@ -417,33 +422,34 @@ campus_gocard_agg_wide %>%
 
 ### Original data 
 
-```{r echo=FALSE}
+```{r}
 prime_agg <- 
-  readRDS("Z:/WIFIUQHPC-Q0766/TEMPO_Wi-Fi/data/clean/processed_prime_reports/prime_agg_2018_12_2019_04.Rds") %>%
+  readRDS("../TEMPO_Wi-Fi/data/clean/processed_prime_reports/prime_agg_2018_12_2019_04.Rds") %>%
   rename(date = timestamp) %>% 
   filter(date >= ymd_hms("2018-12-03 00:00:00", tz = "Australia/Brisbane")) %>% 
-  filter(date <= ymd_hms("2019-03-24 23:59:59", tz = "Australia/Brisbane")) 
+  filter(date <= ymd_hms("2019-03-24 23:59:59", tz = "Australia/Brisbane"))
 
+# tz(prime_agg$date)
+```
+
+```{r eval=FALSE, include=FALSE}
 # prime_agg <- 
-#   readRDS("Z:/WIFIUQHPC-Q0766/TEMPO_Wi-Fi/data/clean/processed_prime_reports/prime_agg_2018_12_2019_04_ALT.Rds") %>%
+#   readRDS("../TEMPO_Wi-Fi/data/clean/processed_prime_reports/prime_agg_2018_12_2019_04_ALT.Rds") %>%
 #   rename(date = timestamp) %>%
 #   filter(date >= ymd_hms("2018-12-03 00:00:00", tz = "Australia/Brisbane")) %>% 
 #   filter(date <= ymd_hms("2019-03-24 23:59:59", tz = "Australia/Brisbane")) 
 
 # prime_agg <- 
-#   readRDS("Z:/WIFIUQHPC-Q0766/TEMPO_Wi-Fi/data/clean/processed_prime_reports/prime_agg_2.Rds") %>%
+#   readRDS("../TEMPO_Wi-Fi/data/clean/processed_prime_reports/prime_agg_2.Rds") %>%
 #   rename(date = index) %>% 
 #   filter(date >= ymd_hms("2018-12-03 00:00:00", tz = "Australia/Brisbane")) %>% 
 #   filter(date <= ymd_hms("2019-03-24 23:59:59", tz = "Australia/Brisbane")) 
 
 # prime_agg <- 
-#   readRDS("Z:/WIFIUQHPC-Q0766/TEMPO_Wi-Fi/data/clean/processed_prime_reports/prime_agg_3.Rds") %>%
+#   readRDS("../TEMPO_Wi-Fi/data/clean/processed_prime_reports/prime_agg_3.Rds") %>%
 #   rename(date = prime_agg_3) %>%
 #   filter(date >= ymd_hms("2018-12-03 00:00:00", tz = "Australia/Brisbane")) %>% 
-#   filter(date <= ymd_hms("2019-03-24 23:59:59", tz = "Australia/Brisbane")) 
-
-# tz(prime_agg$date)
-
+#   filter(date <= ymd_hms("2019-03-24 23:59:59", tz = "Australia/Brisbane"))
 ```
 
 Detailed counts for week of `2018-12-09` across type of data.
@@ -455,7 +461,6 @@ prime_agg %>%
   geom_line() +
   scale_x_datetime() + theme_minimal() + 
   xlab("") + ylab("Wi-Fi users")
-
 ```
 
 Overview of four months, connected users
@@ -508,7 +513,7 @@ rm(prime_agg_poi, prime_agg_nb)
 
 ## Weather
 
-```{r echo=FALSE}
+```{r}
 uqweather <- readRDS(here::here("data", "uqweather", "clean", "uqweather.Rds")) %>% 
   mutate(timestamp = force_tz(timestamp, tzone = "Australia/Brisbane")) %>% 
   filter(timestamp >= ymd_hms("2018-12-03 00:00:00", tz = "Australia/Brisbane") & 
@@ -573,14 +578,19 @@ data <- full_join(prime_agg, green_bridge_wide) %>%
          weekend = if_else(weekday %in% c("Saturday", "Sunday"), "Weekend", "Weekday"),
          time = as.numeric(date - min(prime_agg$date)) / 900) %>% 
   mutate(stock = veh_stock + ped_stock) %>% 
-  # left_join(rename(uqweather, date = timestamp)) %>% 
+  left_join(rename(uqweather, date = timestamp)) %>%
   mutate(holidays = ifelse(date >= ymd_hms("2018-12-23 00:00:00", tz = "Australia/Brisbane") & 
                              date <= ymd_hms("2019-01-02 23:59:59", tz = "Australia/Brisbane"),
                            yes = "yes", no = "no"))
+```
 
+```{r echo=FALSE}
+sapply(data, function(x) sum(is.na(x)))
+```
 
-# sapply(data, function(x) sum(is.na(x)))
-# rm(prime_agg, green_bridge, green_bridge_wide, bcc_traffic, uqweather)
+```{r echo=FALSE}
+rm(prime_agg, green_bridge, green_bridge_wide, bcc_traffic, uqweather)
+gc()
 ```
 
 ## Cyclists 
@@ -612,7 +622,6 @@ data %>%
   theme_minimal() + ylab("Connected users") +
   facet_wrap(~type, ncol = 1, scales = "free_y")
 ```
-
 
 ## Pedestrians 
 
@@ -768,7 +777,6 @@ hyper.prec = list(theta = list(
 
 # scaling 
 inla.setOption(scale.model.default = TRUE)
-
 ```
 
 ## Pedestrians & bikes only
@@ -788,7 +796,6 @@ ped1_fit <- bind_cols(time = data$time, count = data$users_mac,
                       fit = ped1$summary.fitted.values$`0.5quant`,
                       lci = ped1$summary.fitted.values$`0.025quant`, 
                       uci = ped1$summary.fitted.values$`0.975quant`)
-
 ```
 
 ### One trend for ped_stocks + weekday
@@ -807,7 +814,6 @@ ped2_fit <- bind_cols(time = data$time, count = data$users_mac,
                       fit = ped2$summary.fitted.values$`0.5quant`,
                       lci = ped2$summary.fitted.values$`0.025quant`, 
                       uci = ped2$summary.fitted.values$`0.975quant`)
-
 ```
 
 ### One trend for ped_stocks + weekdays + holidays
@@ -827,9 +833,7 @@ ped3_fit <- bind_cols(time = data$time, count = data$users_mac,
                       fit = ped3$summary.fitted.values$`0.5quant`,
                       lci = ped3$summary.fitted.values$`0.025quant`, 
                       uci = ped3$summary.fitted.values$`0.975quant`)
-
 ```
-
 
 ## Vehicles
 
@@ -848,7 +852,6 @@ veh1_fit <- bind_cols(time = data$time, count = data$users_mac,
                       fit = veh1$summary.fitted.values$`0.5quant`,
                       lci = veh1$summary.fitted.values$`0.025quant`, 
                       uci = veh1$summary.fitted.values$`0.975quant`)
-
 ```
 
 ### One trend for stocks + weekday
@@ -867,7 +870,6 @@ veh2_fit <- bind_cols(time = data$time, count = data$users_mac,
                       fit = veh2$summary.fitted.values$`0.5quant`,
                       lci = veh2$summary.fitted.values$`0.025quant`, 
                       uci = veh2$summary.fitted.values$`0.975quant`)
-
 ```
 
 ### One trend for stocks + weekday + holidays
@@ -887,9 +889,7 @@ veh3_fit <- bind_cols(time = data$time, count = data$users_mac,
                       fit = veh3$summary.fitted.values$`0.5quant`,
                       lci = veh3$summary.fitted.values$`0.025quant`, 
                       uci = veh3$summary.fitted.values$`0.975quant`)
-
 ```
-
 
 ## Both stocks
 
@@ -909,7 +909,6 @@ both1_fit <- bind_cols(time = data$time, count = data$users_mac,
                        fit = both1$summary.fitted.values$`0.5quant`,
                        lci = both1$summary.fitted.values$`0.025quant`, 
                        uci = both1$summary.fitted.values$`0.975quant`)
-
 ```
 
 ### One trend for stocks + weekday
@@ -929,7 +928,6 @@ both2_fit <- bind_cols(time = data$time, count = data$users_mac,
                        fit = both2$summary.fitted.values$`0.5quant`,
                        lci = both2$summary.fitted.values$`0.025quant`, 
                        uci = both2$summary.fitted.values$`0.975quant`)
-
 ```
 
 ### One trend for stocks + weekday + holidays
@@ -950,9 +948,7 @@ both3_fit <- bind_cols(time = data$time, count = data$users_mac,
                        fit = both3$summary.fitted.values$`0.5quant`,
                        lci = both3$summary.fitted.values$`0.025quant`, 
                        uci = both3$summary.fitted.values$`0.975quant`)
-
 ```
-
 
 ## Comparing
 
@@ -985,7 +981,7 @@ autoplot(both3)
 
 ### Fitted values
 
-```{r echo=FALSE}
+```{r}
 both3_fit <- bind_cols(time = data$time, date = data$date, count = data$users_mac,
                        fit = both3$summary.fitted.values$`0.5quant`,
                        lci = both3$summary.fitted.values$`0.025quant`, 
@@ -993,13 +989,17 @@ both3_fit <- bind_cols(time = data$time, date = data$date, count = data$users_ma
                        difference = round(data$users_mac - both3$summary.fitted.values$`0.5quant`),
                        difference_perc = round(((data$users_mac - both3$summary.fitted.values$`0.5quant`) / data$users_mac) *100, digits = 2)
 )
+```
 
+```{r echo=FALSE}
 ggplot(both3_fit, aes(x = date)) +
   geom_line(aes(y = count), colour = "orange", alpha = 0.5) +
   geom_line(aes(y = fit), col = "purple") +
   geom_ribbon(aes(ymin = lci, ymax = uci), alpha = 0.3) +
-  theme_minimal() + xlab("") 
+  theme_minimal() + xlab("")
+```
 
+```{r echo=FALSE}
 both3_fit %>% 
   filter(time >= 10080) %>% 
   ggplot(aes(x = date)) +
@@ -1013,6 +1013,8 @@ both3_fit %>%
 ```
 
 ### Differences across day
+
+#### Absolute  
 
 ```{r echo=FALSE}
 both3_fit %>% 
@@ -1041,6 +1043,8 @@ both3_fit %>%
            ymin = -Inf, ymax = Inf) +
   theme_minimal() + labs(title = 'Wi-Fi users on campus - counts versus prediction', x = '', y = 'Difference')
 ```
+
+#### Relative  
 
 ```{r echo=FALSE}
 both3_fit %>% 
@@ -1074,8 +1078,7 @@ both3_fit %>%
 
 Using data since `2019-02-25 00:00:00` to `2019-03-18 00:00:00` we train the model and start predicting number of users in the next two hours. Progressively when new data become available, they are included and yet again new model is fitted with further projection horizon. Prediction is run for one week.
 
-
-```{r include=FALSE}
+```{r eval=FALSE}
 # data starting 2019-02-25 00:00:00
 # it's 8064 in numerical time
 # prediction starting 2019-03-18 00:00:00	
@@ -1088,7 +1091,7 @@ end <- max(data$time) - horizon
 
 for (i in start:end) {
   
-  print(paste("Started: ", Sys.time()))
+  # print(paste("Started: ", Sys.time()))
   
   data_pred <- data %>% 
     filter(date >= ymd_hms("2019-02-25 00:00:00", tz = "Australia/Brisbane")) %>% 
@@ -1125,22 +1128,26 @@ for (i in start:end) {
     rm(mod_fit)
   }
   
-  print(paste(Sys.time(), "Done time:", i))
+  print(paste(Sys.time(), "Done time:", i, "out of", end))
 }
 
+saveRDS(data_pred, "data/data_pred.Rds")
+saveRDS(result, "data/result.Rds")
 ```
 
 ```{r include=FALSE}
+data_pred <- readRDS("data/data_pred.Rds")
+result <- readRDS("data/result.Rds")
+
 annotations <- result %>% 
   dplyr::select(date, frame, difference_mean, difference_perc_mean, frame) %>% 
   group_by(frame) %>% 
   filter(row_number() == 1) %>% 
   ungroup() %>% 
   mutate(text = paste0("Mean counts - pred: ", difference_mean, " (abs. ", difference_perc_mean, "%)"))
-
 ```
 
-## Example of single 'frame'
+## Example of single 'frames'
 
 ```{r echo=FALSE}
 frame_select <- 1
@@ -1188,10 +1195,9 @@ ggplot(temp) +
   labs(title = 'Wi-Fi users on the campus', x = '', y = 'Counts / prediction')
 ```
 
-
 ## Animating week
 
-```{r}
+```{r eval=FALSE}
 prediction_animate_09 <- ggplot(result) +
   geom_line(data = filter(data, date >= ymd_hms("2019-03-18 00:00:00", tz = "Australia/Brisbane")),
             aes(x = date, y = users_mac, colour = "orange"),
@@ -1215,8 +1221,9 @@ prediction_animate_09 <- ggplot(result) +
 
 animate(prediction_animate_09, nframes = 2*max(result$frame), height = 600, width = 900)
 anim_save("animations/wifi_prediction_animate_09.gif")
-
 ```
+
+![Animation](../animations/wifi_prediction_animate_09.gif)
 
 ## Temporal distribution of differences 
 
@@ -1247,7 +1254,6 @@ ggplot(annotations) +
   geom_col(aes(x= date, y = difference_mean), colour = "purple", alpha = 0.8) +
   theme_light(base_size = 18) + 
   labs(title = 'Wi-Fi users on the campus', x = '', y = 'Mean counts - prediction')
-
 ```
 
 ### Relative
@@ -1278,4 +1284,3 @@ ggplot(annotations) +
   theme_light(base_size = 18) + 
   labs(title = 'Wi-Fi users on the campus', x = '', y = 'Mean counts - prediction (abs. %)')
 ```
-
